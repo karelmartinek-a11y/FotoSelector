@@ -1,0 +1,42 @@
+2026-01-26 15:21:42,073 [INFO] KájovoPhotoSelector – threadpool velikost: 12
+2026-01-26 15:35:50,851 [INFO] KájovoPhotoSelector – threadpool velikost: 12
+2026-01-26 15:36:15,905 [INFO] Reset stavu aplikace.
+2026-01-26 15:36:48,143 [INFO] Začíná skenování: ['Z:/KAJA']
+2026-01-26 15:36:48,239 [INFO] Nalezeno 1 kandidátů před filtrem velikosti.
+2026-01-26 15:36:48,272 [INFO] Po filtru velikosti zůstává 1 souborů.
+2026-01-26 15:36:48,378 [INFO] Skenování dokončeno, přidáno 1 nových záznamů (ID od 1 do 1).
+2026-01-26 15:36:58,747 [INFO] Začíná skenování: ['Z:/OBRAZKY']
+2026-01-26 15:36:58,983 [INFO] Nalezeno 720 kandidátů před filtrem velikosti.
+2026-01-26 15:37:11,673 [INFO] Po filtru velikosti zůstává 691 souborů.
+2026-01-26 15:45:20,930 [INFO] Skenování dokončeno, přidáno 691 nových záznamů (ID od 2 do 692).
+2026-01-26 15:54:40,322 [INFO] Začíná skenování: ['Z:/OBRAZKY']
+2026-01-26 15:54:40,610 [INFO] Nalezeno 720 kandidátů před filtrem velikosti.
+2026-01-26 15:54:42,934 [INFO] Filtrování přerušeno uživatelem.
+2026-01-26 15:54:42,935 [INFO] Po filtru velikosti zůstává 259 souborů.
+2026-01-26 15:54:43,211 [INFO] Skenování dokončeno, přidáno 0 nových záznamů (ID od 693 do 692).
+2026-01-26 15:54:48,791 [INFO] Začíná skenování: ['Z:/OBRAZKY']
+2026-01-26 15:54:48,833 [INFO] Nalezeno 720 kandidátů před filtrem velikosti.
+2026-01-26 15:54:57,845 [INFO] Po filtru velikosti zůstává 691 souborů.
+2026-01-26 15:54:58,391 [INFO] Skenování dokončeno, přidáno 0 nových záznamů (ID od 693 do 692).
+2026-01-26 16:07:48,607 [INFO] Začíná skenování: ['Z:/USERS']
+2026-01-26 16:07:50,889 [INFO] Nalezeno 166 kandidátů před filtrem velikosti.
+2026-01-26 16:07:52,540 [INFO] Po filtru velikosti zůstává 161 souborů.
+2026-01-26 16:08:35,074 [INFO] Skenování dokončeno, přidáno 161 nových záznamů (ID od 693 do 853).
+2026-01-26 16:50:52,885 [INFO] Session uložena do: C:/GitHub/KájovoPhotoSelector/Kaja_session.json
+2026-01-27 13:25:02,624 [INFO] KájovoPhotoSelector – threadpool velikost: 12
+2026-01-27 13:33:57,977 [INFO] Začíná skenování: ['C:/GitHub/hotel-frontend']
+2026-01-27 13:33:58,010 [INFO] Nalezeno 3 kandidátů před filtrem velikosti.
+2026-01-27 13:33:58,048 [INFO] Po filtru velikosti zůstává 3 souborů.
+2026-01-27 13:33:58,081 [INFO] Skenování dokončeno, přidáno 3 nových záznamů (ID od 1 do 3).
+2026-01-27 13:34:08,137 [INFO] Začíná skenování: ['C:/']
+2026-01-27 13:35:04,154 [INFO] Nalezeno 4090 kandidátů před filtrem velikosti.
+2026-01-27 13:35:05,213 [INFO] Po filtru velikosti zůstává 803 souborů.
+2026-01-27 13:35:41,572 [INFO] Skenování dokončeno, přidáno 803 nových záznamů (ID od 4 do 806).
+2026-01-27 13:36:40,104 [INFO] Začíná skenování: ['Z:/']
+2026-01-27 13:36:42,710 [INFO] Nalezeno 887 kandidátů před filtrem velikosti.
+2026-01-27 13:37:01,774 [INFO] Po filtru velikosti zůstává 796 souborů.
+2026-01-27 13:46:06,653 [INFO] Skenování dokončeno, přidáno 796 nových záznamů (ID od 807 do 1602).
+2026-01-27 13:51:16,747 [INFO] Začíná skenování: ['C:/Users/provo/OneDrive - Aqua Sport Club s.r.o']
+2026-01-27 13:51:16,974 [INFO] Nalezeno 118 kandidátů před filtrem velikosti.
+2026-01-27 13:51:17,102 [INFO] Po filtru velikosti zůstává 81 souborů.
+2026-01-27 13:51:23,352 [INFO] Skenování dokončeno, přidáno 81 nových záznamů (ID od 1603 do 1683).

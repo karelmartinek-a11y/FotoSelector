@@ -1,0 +1,43 @@
+2026-01-23 04:35:30,842 [INFO] Petr – threadpool velikost: 12
+2026-01-23 04:35:47,815 [INFO] Začíná skenování: ['C:/FOTO']
+2026-01-23 04:35:47,860 [INFO] Nalezeno 3 kandidátů před filtrem velikosti.
+2026-01-23 04:35:47,919 [INFO] Po filtru velikosti zůstává 3 souborů.
+2026-01-23 04:35:48,038 [INFO] Skenování dokončeno, přidáno 3 nových záznamů (ID od 1 do 3).
+2026-01-23 04:36:02,968 [INFO] Reset stavu aplikace.
+2026-01-23 04:37:00,901 [INFO] Petr – threadpool velikost: 12
+2026-01-23 04:37:45,429 [INFO] Začíná skenování: ['Z:/OBRAZKY/Kresby']
+2026-01-23 04:37:45,556 [INFO] Nalezeno 279 kandidátů před filtrem velikosti.
+2026-01-23 04:37:47,878 [INFO] Po filtru velikosti zůstává 279 souborů.
+2026-01-23 04:38:38,058 [INFO] Skenování dokončeno, přidáno 279 nových záznamů (ID od 1 do 279).
+2026-01-23 04:39:34,375 [WARNING] Obrázek je při hashování přeskočen (příliš velký): Z:/OBRAZKY/Kresby\vizova_povinnost_mapa.png
+2026-01-23 04:49:58,448 [INFO] Uživatel přerušil zpracování duplicit.
+2026-01-23 04:53:31,428 [INFO] Petr – threadpool velikost: 12
+2026-01-23 04:53:40,465 [INFO] Začíná skenování: ['C:/FOTO/VER3']
+2026-01-23 04:53:40,501 [INFO] Nalezeno 1 kandidátů před filtrem velikosti.
+2026-01-23 04:53:40,548 [INFO] Po filtru velikosti zůstává 1 souborů.
+2026-01-23 04:53:40,601 [INFO] Skenování dokončeno, přidáno 1 nových záznamů (ID od 1 do 1).
+2026-01-23 04:54:08,071 [INFO] Začíná skenování: ['Z:/OBRAZKY/Kresby']
+2026-01-23 04:54:08,173 [INFO] Nalezeno 279 kandidátů před filtrem velikosti.
+2026-01-23 04:54:10,941 [INFO] Po filtru velikosti zůstává 279 souborů.
+2026-01-23 04:54:48,964 [INFO] Skenování dokončeno, přidáno 279 nových záznamů (ID od 2 do 280).
+2026-01-23 04:57:19,792 [INFO] Petr – threadpool velikost: 12
+2026-01-23 04:57:39,195 [INFO] Začíná skenování: ['Z:/OBRAZKY/Kresby']
+2026-01-23 04:57:39,300 [INFO] Nalezeno 279 kandidátů před filtrem velikosti.
+2026-01-23 04:57:42,013 [INFO] Po filtru velikosti zůstává 279 souborů.
+2026-01-23 04:58:23,088 [INFO] Skenování dokončeno, přidáno 279 nových záznamů (ID od 1 do 279).
+2026-01-23 05:00:27,079 [INFO] Petr – threadpool velikost: 12
+2026-01-23 05:00:40,238 [INFO] Začíná skenování: ['Z:/OBRAZKY/Kresby']
+2026-01-23 05:00:40,333 [INFO] Nalezeno 279 kandidátů před filtrem velikosti.
+2026-01-23 05:00:42,867 [INFO] Po filtru velikosti zůstává 279 souborů.
+2026-01-23 05:01:22,063 [INFO] Skenování dokončeno, přidáno 279 nových záznamů (ID od 1 do 279).
+2026-01-23 05:03:40,142 [INFO] Petr – threadpool velikost: 12
+2026-01-23 05:03:55,432 [INFO] Začíná skenování: ['Z:/OBRAZKY/HOTEL']
+2026-01-23 05:03:55,586 [INFO] Nalezeno 435 kandidátů před filtrem velikosti.
+2026-01-23 05:03:59,600 [INFO] Po filtru velikosti zůstává 435 souborů.
+2026-01-23 05:04:29,727 [INFO] Skenování přerušeno uživatelem po 70 souborech.
+2026-01-23 05:04:29,730 [INFO] Skenování dokončeno, přidáno 70 nových záznamů (ID od 1 do 70).
+2026-01-23 14:27:38,653 [INFO] Petr – threadpool velikost: 12
+2026-01-23 14:28:46,182 [INFO] Začíná skenování: ['C:/FOTO']
+2026-01-23 14:28:46,205 [INFO] Nalezeno 3 kandidátů před filtrem velikosti.
+2026-01-23 14:28:46,237 [INFO] Po filtru velikosti zůstává 3 souborů.
+2026-01-23 14:28:46,278 [INFO] Skenování dokončeno, přidáno 3 nových záznamů (ID od 1 do 3).
