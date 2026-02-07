@@ -29,6 +29,7 @@ from PyQt6.QtCore import (
     QPropertyAnimation,
     QRect,
     QPoint,
+    QPointF,
     QUrl,
 )
 from PyQt6.QtGui import (
@@ -101,6 +102,7 @@ except ImportError:
     send2trash = None
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RESOURCE_DIR_NAME = "resources"
 
 
 def resource_path(rel_path: str) -> str:
@@ -110,9 +112,27 @@ def resource_path(rel_path: str) -> str:
     - při běhu z .exe (PyInstaller): sys._MEIPASS
     """
     base = getattr(sys, "_MEIPASS", None)
-    if base:
-        return os.path.join(base, rel_path)
-    return os.path.join(BASE_DIR, rel_path)
+    root = base if base else BASE_DIR
+    candidate = os.path.join(root, RESOURCE_DIR_NAME, rel_path)
+    if base or os.path.exists(candidate):
+        return candidate
+    return os.path.join(root, rel_path)
+
+
+def wav_duration_ms(filename: str, default_ms: int = 1600) -> int:
+    # Vrati delku WAV v ms; fallback na default pri chybe.
+    path = resource_path(filename)
+    try:
+        import wave  # noqa: PLC0415
+
+        with wave.open(path, "rb") as wav:
+            frames = wav.getnframes()
+            rate = wav.getframerate()
+        if rate <= 0:
+            return default_ms
+        return max(1, int((frames / rate) * 1000))
+    except Exception:
+        return default_ms
 # =====================
 # KONSTANTY A BARVY UI
 # =====================
@@ -138,6 +158,7 @@ SFX_POP = "sfx_pop.wav"
 SFX_ERROR = "sfx_error.wav"
 SFX_INTRO = "sfx_intro.wav"
 SFX_OUTRO = "sfx_outro.wav"
+MAIN_BG_IMAGE = "plocha.png"
 # “rozumné” modály (ne mikro okénka)
 DLG_BASE_W_CHARS = 64
 DLG_BASE_H_LINES = 12
@@ -245,7 +266,7 @@ logger = logging.getLogger(__name__)
 # =====================
 # ASSETY (logo + ikona)
 # =====================
-APP_ICON_PNG_CANDIDATES = ["kajovo_photoselector_logo.png", "kaja.png"]
+APP_ICON_PNG_CANDIDATES = ["KajovoPhotoSelector.png", "kajovo_photoselector_logo.png", "kaja.png"]
 APP_ICON_ICO_CANDIDATES = ["kajovo_photoselector.ico", "kajovo.ico"]
 
 
@@ -837,6 +858,9 @@ class DraggableListWidget(QListWidget):
         self._rubber_band: Optional[QRubberBand] = None
         self._rubber_origin: Optional[QPoint] = None
         self._rubber_selecting: bool = False
+        self._bg_enabled = True
+        self._bg_source = resource_path(MAIN_BG_IMAGE)
+        self._bg_cache_key = None
     def startDrag(self, supportedActions):
         if self.main_window.current_view != "MAIN":
             return
@@ -893,6 +917,58 @@ class DraggableListWidget(QListWidget):
             self._rubber_selecting = False
             return
         super().mouseReleaseEvent(event)
+
+    def set_main_background_enabled(self, enabled: bool):
+        self._bg_enabled = enabled
+        self._update_background()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_background()
+
+    def _clear_background(self):
+        pal = self.viewport().palette()
+        pal.setBrush(QPalette.ColorRole.Base, QBrush())
+        self.viewport().setPalette(pal)
+        self.viewport().setAutoFillBackground(False)
+        self.viewport().update()
+
+    def _update_background(self):
+        if not self._bg_enabled:
+            self._clear_background()
+            return
+        path = self._bg_source
+        if not path or not os.path.exists(path):
+            self._clear_background()
+            return
+        size = self.viewport().size()
+        if size.width() <= 0 or size.height() <= 0:
+            return
+        key = (path, size.width(), size.height())
+        if self._bg_cache_key == key:
+            return
+        pm = QPixmap(path)
+        if pm.isNull():
+            self._clear_background()
+            return
+        scaled = pm.scaled(
+            size,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        result = QPixmap(size)
+        result.fill(QColor(0, 0, 0))
+        painter = QPainter(result)
+        x = (size.width() - scaled.width()) // 2
+        y = (size.height() - scaled.height()) // 2
+        painter.drawPixmap(x, y, scaled)
+        painter.fillRect(result.rect(), QColor(8, 12, 22, 160))
+        painter.end()
+        pal = self.viewport().palette()
+        pal.setBrush(QPalette.ColorRole.Base, QBrush(result))
+        self.viewport().setPalette(pal)
+        self.viewport().setAutoFillBackground(True)
+        self._bg_cache_key = key
 class BucketDropGroupBox(QGroupBox):
     def __init__(self, code: str, main_window, parent=None):
         super().__init__(parent)
@@ -958,6 +1034,78 @@ class BucketDropGroupBox(QGroupBox):
         if ids:
             self.main_window.assign_ids_to_bucket(self.code, ids)
         event.acceptProposedAction()
+
+
+class ExitDissolveOverlay(QWidget):
+    finished = pyqtSignal()
+
+    def __init__(self, pixmap: QPixmap, geo: QRect, duration_ms: int):
+        super().__init__(None)
+        if pixmap.isNull() or pixmap.width() <= 1 or pixmap.height() <= 1:
+            self._pixmap = QPixmap(1, 1)
+            self._pixmap.fill(QColor(0, 0, 0))
+        else:
+            img = pixmap.toImage().convertToFormat(QImage.Format.Format_ARGB32)
+            solid = QImage(img.size(), QImage.Format.Format_ARGB32)
+            solid.fill(QColor(0, 0, 0))
+            painter = QPainter(solid)
+            painter.drawImage(0, 0, img)
+            painter.end()
+            self._pixmap = QPixmap.fromImage(solid)
+        self._geo = geo
+        self._duration_ms = max(400, int(duration_ms))
+        self._interval_ms = 30
+        self._tiles: List[QRect] = []
+        self._tiles_per_tick = 1
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setWindowFlag(Qt.WindowType.Tool, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setGeometry(self._geo)
+
+        self._build_tiles()
+
+    def _build_tiles(self):
+        w = max(1, self._pixmap.width())
+        h = max(1, self._pixmap.height())
+        tile = max(28, min(64, min(w, h) // 18))
+        cols = max(1, (w + tile - 1) // tile)
+        rows = max(1, (h + tile - 1) // tile)
+        tiles: List[QRect] = []
+        for y in range(rows):
+            for x in range(cols):
+                tiles.append(QRect(x * tile, y * tile, tile, tile))
+        random.shuffle(tiles)
+        self._tiles = tiles
+        steps = max(1, self._duration_ms // self._interval_ms)
+        self._tiles_per_tick = max(1, (len(self._tiles) + steps - 1) // steps)
+
+    def start(self):
+        self._timer.start(self._interval_ms)
+
+    def _tick(self):
+        if not self._tiles:
+            self._timer.stop()
+            self.close()
+            self.finished.emit()
+            return
+        count = min(self._tiles_per_tick, len(self._tiles))
+        painter = QPainter(self._pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        for _ in range(count):
+            rect = self._tiles.pop()
+            painter.fillRect(rect, Qt.GlobalColor.transparent)
+        painter.end()
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.drawPixmap(0, 0, self._pixmap)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1128,6 +1276,9 @@ class MainWindow(QMainWindow):
         self.sfx = sfx if sfx is not None else SoundBank()
         self.toast_layer: Optional[ToastLayer] = None
         self._outro_done = False
+        self._exit_in_progress = False
+        self._exit_overlay: Optional[ExitDissolveOverlay] = None
+        self._exit_sfx: Optional["QSoundEffect"] = None
         self.threadpool = QThreadPool()
         logger.info("KájovoPhotoSelector – threadpool velikost: %d", self.threadpool.maxThreadCount())
         self.images: List[ImageRecord] = []
@@ -1419,18 +1570,22 @@ class MainWindow(QMainWindow):
         self.list_widget.setGridSize(QSize(120, 120))
         self.list_widget.setWordWrap(False)
         self.list_widget.setStyleSheet(
-            """
-            QListWidget::item {
+            f"""
+            QListWidget {{
+                background-color: {BG_COLOR};
+            }}
+            QListWidget::item {{
                 border: 2px solid transparent;
                 padding: 6px;
                 border-radius: 10px;
-            }
-            QListWidget::item:selected {
-                border: 2px solid %s;
+            }}
+            QListWidget::item:selected {{
+                border: 2px solid {ACCENT_COLOR};
                 background-color: rgba(255, 213, 79, 45);
-            }
-            """ % ACCENT_COLOR
+            }}
+            """
         )
+        self.list_widget.set_main_background_enabled(True)
         main_layout.addWidget(self.list_widget, stretch=1)
         # Tlačítko pro návrat z hromádek do hlavní složky (spodní, celá šířka)
         self.btn_return_from_bucket = AnimatedPushButton(
@@ -1522,6 +1677,7 @@ class MainWindow(QMainWindow):
     # ---------------- STAV / POMOC ----------------
     def mark_dirty(self):
         self.session_dirty = True
+        self.list_widget.set_main_background_enabled(self.current_view == "MAIN")
         self.update_view_stats()
     def clear_dirty(self):
         self.session_dirty = False
@@ -2129,12 +2285,71 @@ class MainWindow(QMainWindow):
             if choice == "save":
                 if not self._do_save():
                     return
-        if not self._outro_done:
-            self._outro_done = True
-            self.sfx.play_outro()
-            QTimer.singleShot(220, self.close)
+        self._start_exit_sequence()
+
+    def _start_exit_sequence(self):
+        if self._exit_in_progress:
             return
-        self.close()
+        self._exit_in_progress = True
+        try:
+            self.sfx.play_outro()
+        except Exception:
+            pass
+        # pojistka: pustit outro i mimo SoundBank (napr. kdyz jsou zvuky vypnute)
+        try:
+            if QSoundEffect is not None:
+                path = resource_path(SFX_OUTRO)
+                if os.path.exists(path):
+                    eff = QSoundEffect()
+                    eff.setSource(QUrl.fromLocalFile(path))
+                    eff.setVolume(0.9)
+                    self._exit_sfx = eff
+                    eff.play()
+        except Exception:
+            pass
+        outro_ms = wav_duration_ms(SFX_OUTRO, default_ms=1600)
+        screen = self.windowHandle().screen() if self.windowHandle() else QGuiApplication.primaryScreen()
+        geo = self.geometry()
+        if geo.width() <= 1 or geo.height() <= 1:
+            if screen is not None:
+                geo = screen.availableGeometry()
+        pixmap = QPixmap(geo.size())
+        pixmap.fill(QColor(0, 0, 0))
+        try:
+            self.repaint()
+            QApplication.processEvents()
+            shot = self.grab()
+            if not shot.isNull() and shot.width() > 1 and shot.height() > 1:
+                pixmap = shot
+            if (pixmap.isNull() or pixmap.width() <= 1 or pixmap.height() <= 1) and screen is not None:
+                full = screen.grabWindow(0)
+                screen_geo = screen.geometry()
+                rel = QRect(geo)
+                rel.translate(-screen_geo.x(), -screen_geo.y())
+                if not full.isNull():
+                    cut = full.copy(rel)
+                    if not cut.isNull() and cut.width() > 1 and cut.height() > 1:
+                        pixmap = cut
+            if not pixmap.isNull() and (pixmap.width() != geo.width() or pixmap.height() != geo.height()):
+                pixmap = pixmap.scaled(
+                    geo.size(),
+                    Qt.AspectRatioMode.IgnoreAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+        except Exception:
+            pass
+        if pixmap.isNull() or pixmap.width() <= 1 or pixmap.height() <= 1:
+            pixmap = QPixmap(geo.size())
+            pixmap.fill(QColor(0, 0, 0))
+        overlay = ExitDissolveOverlay(pixmap, geo, outro_ms)
+        self._exit_overlay = overlay
+        overlay.finished.connect(lambda: QApplication.instance().quit())
+        overlay.show()
+        overlay.raise_()
+        QApplication.processEvents()
+        self.hide()
+        overlay.start()
+        QTimer.singleShot(outro_ms + 200, lambda: QApplication.instance().quit())
     # ---------------- DUPLICITY ----------------
     def on_find_duplicates(self):
         # duplicity jen v HLAVNÍ složce
@@ -2341,10 +2556,8 @@ class MainWindow(QMainWindow):
     # ---------------- CLOSE EVENT ----------------
     def closeEvent(self, event):
         try:
-            if not self._outro_done:
-                self._outro_done = True
-                self.sfx.outro()
-                QTimer.singleShot(220, self.close)
+            if not self._exit_in_progress:
+                self._start_exit_sequence()
                 event.ignore()
                 return
         except Exception:
@@ -2402,7 +2615,7 @@ def main():
         win.raise_()
         win.activateWindow()
 
-    splash.finished.connect(show_main)
+    splash.about_to_finish.connect(show_main)
 
     sys.exit(app.exec())
 
@@ -2413,6 +2626,7 @@ class IntroSplash(QWidget):
     """
 
     finished = pyqtSignal()
+    about_to_finish = pyqtSignal()
 
     def __init__(self, sfx: SoundBank):
         super().__init__(None)
@@ -2425,9 +2639,9 @@ class IntroSplash(QWidget):
         self.setAutoFillBackground(True)
         self.setWindowIcon(get_app_icon())
         pal = self.palette()
-        pal.setColor(QPalette.ColorRole.Window, QColor("#0A0E1A"))
+        pal.setColor(QPalette.ColorRole.Window, QColor("#000000"))
         self.setPalette(pal)
-        self.setStyleSheet("background-color: #0A0E1A;")
+        self.setStyleSheet("background-color: #000000;")
 
         scr = QGuiApplication.primaryScreen()
         if scr is not None:
@@ -2447,13 +2661,7 @@ class IntroSplash(QWidget):
             logo.setText(APP_NAME)
             logo.setStyleSheet("color:#E9F0FF; font-size:48px; font-weight:900;")
 
-        subtitle = QLabel("Kája se rozhlíží po světě fotek…", self)
-        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color:#B7C7FF; font-size:18px; font-weight:700;")
-
         layout.addWidget(logo, alignment=Qt.AlignmentFlag.AlignCenter)
-        layout.addSpacing(12)
-        layout.addWidget(subtitle, alignment=Qt.AlignmentFlag.AlignCenter)
 
         layout.addStretch(1)
 
@@ -2462,20 +2670,29 @@ class IntroSplash(QWidget):
         self.setGraphicsEffect(self._fx)
         self._fx.setOpacity(0.0)
 
+        self._intro_ms = wav_duration_ms(SFX_INTRO, default_ms=1800)
+        self._fade_in_ms = max(200, int(self._intro_ms * 0.35))
+        self._fade_out_ms = max(200, int(self._intro_ms * 0.25))
+        total_fade = self._fade_in_ms + self._fade_out_ms
+        if total_fade > self._intro_ms:
+            self._fade_in_ms = max(120, int(self._intro_ms * 0.55))
+            self._fade_out_ms = max(120, self._intro_ms - self._fade_in_ms)
+        self._hold_ms = max(0, self._intro_ms - self._fade_in_ms - self._fade_out_ms)
+
         self.anim_in = QPropertyAnimation(self._fx, b"opacity")
-        self.anim_in.setDuration(900)
+        self.anim_in.setDuration(self._fade_in_ms)
         self.anim_in.setStartValue(0.0)
         self.anim_in.setEndValue(1.0)
         self.anim_in.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         self.anim_out = QPropertyAnimation(self._fx, b"opacity")
-        self.anim_out.setDuration(650)
+        self.anim_out.setDuration(self._fade_out_ms)
         self.anim_out.setStartValue(1.0)
         self.anim_out.setEndValue(0.0)
         self.anim_out.setEasingCurve(QEasingCurve.Type.InCubic)
         self.anim_out.finished.connect(self._emit_done)
 
-        self.anim_in.finished.connect(lambda: QTimer.singleShot(650, self._finish))
+        self.anim_in.finished.connect(lambda: QTimer.singleShot(self._hold_ms, self._finish))
         # Zobrazit až po vytvoření animací, aby showEvent měl připravený self.anim_in
         self.showFullScreen()
 
@@ -2487,7 +2704,13 @@ class IntroSplash(QWidget):
         self.anim_in.start()
         return super().showEvent(event)
 
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0))
+        super().paintEvent(event)
+
     def _finish(self):
+        self.about_to_finish.emit()
         self.anim_out.start()
 
     def _emit_done(self):

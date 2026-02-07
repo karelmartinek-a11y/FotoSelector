@@ -1,9 +1,9 @@
 # FotoSelector
 
-Jednoduchá desktopová aplikace v PyQt6 pro třídění fotografií (hlavní skript `Kaja_Tridi_v6_4.py`). Volitelně využívá `Pillow` pro náhledy a `send2trash` pro bezpečnější mazání.
+Jednoducha desktopova aplikace v PyQt6 pro trideni fotografii (hlavni skript `KajovoPhotoSelector.py`). Volitelne vyuziva `Pillow` pro nahledy a `send2trash` pro bezpecnejsi mazani. Assety (ikona, logo, zvuky, video) jsou v `resources/`.
 
-## Rychlé spuštění
-- Nainstaluj závislosti: `pip install PyQt6 Pillow send2trash`
-- Spusť: `python Kaja_Tridi_v6_4.py`
+## Rychle spusteni
+- Nainstaluj zavislosti: `pip install PyQt6 Pillow send2trash`
+- Spust: `python KajovoPhotoSelector.py`
 
-Poznámka: Logy (`Kaja_Tridi_Obrazky.log`) a uložené relace (`Kaja_session.json`) se generují vedle skriptu a jsou ignorovány verzováním.
+Poznamka: Logy (`KajovoPhotoSelector.log`) a ulozene relace (`Kaja_session.json`) se generuji vedle skriptu a jsou ignorovany verzovanim.
