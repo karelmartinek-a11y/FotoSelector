@@ -95,6 +95,12 @@ def _set_windows_appusermodel_id(app_id: str) -> None:
     except Exception:
         pass
 from PIL import Image, ImageFile, UnidentifiedImageError
+from kps_security import (
+    normalize_session_roots,
+    resolve_non_conflicting_path,
+    sanitize_loaded_images,
+)
+
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 try:
     from send2trash import send2trash
@@ -643,6 +649,7 @@ def format_seconds(sec: float) -> str:
     return f"{m:d}:{s:02d}"
 def safe_move_file(src: str, dst: str) -> None:
     """Bezpečný přesun (funguje i napříč disky)."""
+    dst = resolve_non_conflicting_path(dst)
     try:
         shutil.move(src, dst)
     except Exception:
@@ -2165,7 +2172,7 @@ class MainWindow(QMainWindow):
             return
         logger.info("Načítám session z %s", path)
         self.reset_state()
-        self.session_roots = data.get("roots", [])
+        self.session_roots = normalize_session_roots(data.get("roots", []))
         self.current_view = data.get("current_view", "MAIN")
         self.last_min_kb = data.get("last_min_kb", 0)
         self.last_max_kb = data.get("last_max_kb", 0)
@@ -2186,7 +2193,7 @@ class MainWindow(QMainWindow):
                     else:
                         w["lbl_path"].setText("Cesta: (není namapováno)")
                 w["group_box"].setTitle(cfg.alias.upper())
-        images_data = data.get("images", [])
+        images_data = sanitize_loaded_images(data.get("images", []), self.session_roots)
         progress = DagmarProgress("Obnovuji miniatury…", self, len(images_data))
         for i, rec_data in enumerate(images_data, start=1):
             try:

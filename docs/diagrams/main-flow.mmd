@@ -1,0 +1,10 @@
+flowchart TD
+  A[Start app] --> B[Select directory]
+  B --> C[Scan image paths]
+  C --> D[Filter by size]
+  D --> E[Build ImageRecord list]
+  E --> F[User assigns buckets]
+  F --> G[SPUST Petra]
+  G --> H{Bucket}
+  H -->|TRASH| I[send2trash/os.remove]
+  H -->|T1..T4| J[safe_move_file]
