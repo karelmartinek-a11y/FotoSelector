@@ -1,0 +1,11 @@
+sequenceDiagram
+  participant U as User
+  participant UI as MainWindow
+  participant SEC as kps_security
+  participant FS as Filesystem
+
+  U->>UI: Load session JSON
+  UI->>SEC: normalize_session_roots + sanitize_loaded_images
+  SEC-->>UI: filtered records
+  UI->>FS: os.path.exists checks
+  UI-->>U: Session restored safely

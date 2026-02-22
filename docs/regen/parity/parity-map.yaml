@@ -1,0 +1,13 @@
+modules:
+  session-load-hardening:
+    status: DONE
+    reference: PR_PENDING
+  move-collision-protection:
+    status: DONE
+    reference: PR_PENDING
+  automated-security-tests:
+    status: DONE
+    reference: PR_PENDING
+  ci-baseline:
+    status: DONE
+    reference: PR_PENDING

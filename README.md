@@ -1,9 +1,41 @@
 # FotoSelector
 
-Jednoducha desktopova aplikace v PyQt6 pro trideni fotografii (hlavni skript `KajovoPhotoSelector.py`). Volitelne vyuziva `Pillow` pro nahledy a `send2trash` pro bezpecnejsi mazani. Assety (ikona, logo, zvuky, video) jsou v `resources/`.
+Desktopová aplikace v PyQt6 pro třídění fotografií do virtuálních hromádek a následné fyzické přesuny/smazání.
 
-## Rychle spusteni
-- Nainstaluj zavislosti: `pip install PyQt6 Pillow send2trash`
-- Spust: `python KajovoPhotoSelector.py`
+## Why
+- rychlé ruční třídění fotek v jedné obrazovce,
+- kontrola duplicit přes perceptuální hash,
+- bezpečnější mazání přes `send2trash` (pokud je dostupné).
 
-Poznamka: Logy (`KajovoPhotoSelector.log`) a ulozene relace (`Kaja_session.json`) se generuji vedle skriptu a jsou ignorovany verzovanim.
+## Quickstart
+```bash
+pip install -r requirements.txt
+python KajovoPhotoSelector.py
+```
+
+## Configuration
+Aplikace nemá ENV konfiguraci; používá:
+- `resources/` pro assety,
+- `KajovoPhotoSelector.log` pro runtime log,
+- `Kaja_session.json` jako výchozí název uložené relace.
+
+## Running
+```bash
+python KajovoPhotoSelector.py
+```
+
+## Testing / checks
+```bash
+python -m unittest discover -s tests -v
+python -m py_compile KajovoPhotoSelector.py kps_security.py
+```
+
+## Troubleshooting
+- Pokud není `send2trash` nainstalováno, mazání je permanentní (`os.remove`).
+- Pokud se nenačtou miniatury, ověřte, že soubory jsou validní obrázky a nejsou poškozené.
+
+## Architecture docs
+- [Architecture](docs/ARCHITECTURE.md)
+- [Security](docs/SECURITY.md)
+- [Contributing](docs/CONTRIBUTING.md)
+- Diagramy: `docs/diagrams/*.mmd`

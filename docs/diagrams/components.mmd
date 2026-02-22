@@ -1,0 +1,20 @@
+flowchart TB
+  subgraph GUI
+    MW[MainWindow]
+    TW[ThumbWorker]
+    DD[Dialogs]
+  end
+  subgraph Core
+    SEC[kps_security.py]
+    UTIL[helpers in KajovoPhotoSelector.py]
+  end
+  subgraph Data
+    IR[ImageRecord]
+    BK[Bucket]
+  end
+  MW --> UTIL
+  MW --> SEC
+  MW --> IR
+  MW --> BK
+  MW --> TW
+  MW --> DD
