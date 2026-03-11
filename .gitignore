@@ -4,3 +4,9 @@ Kajovo_PhotoSelector.log
 Kaja_session.json
 __pycache__/
 *.pyc
+venv/
+.venv/
+build/
+dist/
+*.zip
+.pytest_cache/

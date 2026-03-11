@@ -1,5 +1,17 @@
 import os
-from typing import Iterable, List, Mapping, Any
+from typing import Any, Iterable, List, Mapping
+
+
+def _normalize_path(path: str) -> str:
+    return os.path.realpath(os.path.abspath(path))
+
+
+def is_filesystem_root(path: str) -> bool:
+    normalized = _normalize_path(path)
+    drive, tail = os.path.splitdrive(normalized)
+    if tail in {"\\", "/"}:
+        return True
+    return os.path.dirname(normalized) == normalized
 
 
 def normalize_session_roots(roots: Iterable[str]) -> List[str]:
@@ -9,7 +21,7 @@ def normalize_session_roots(roots: Iterable[str]) -> List[str]:
     for root in roots:
         if not isinstance(root, str) or not root.strip():
             continue
-        abs_root = os.path.abspath(root)
+        abs_root = _normalize_path(root)
         key = os.path.normcase(abs_root)
         if key in seen:
             continue
@@ -18,14 +30,26 @@ def normalize_session_roots(roots: Iterable[str]) -> List[str]:
     return normalized
 
 
+def sanitize_session_roots(roots: Iterable[str]) -> List[str]:
+    """Return only existing directory roots that are safe to trust from session JSON."""
+    sanitized: List[str] = []
+    for root in normalize_session_roots(roots):
+        if not os.path.isdir(root):
+            continue
+        if is_filesystem_root(root):
+            continue
+        sanitized.append(root)
+    return sanitized
+
+
 def is_path_within_roots(path: str, roots: Iterable[str]) -> bool:
     """True if path is inside one of allowed roots (case-insensitive on Windows)."""
     if not isinstance(path, str) or not path.strip():
         return False
-    abs_path = os.path.abspath(path)
+    abs_path = _normalize_path(path)
     path_key = os.path.normcase(abs_path)
     for root in roots:
-        abs_root = os.path.abspath(root)
+        abs_root = _normalize_path(root)
         root_key = os.path.normcase(abs_root)
         if path_key == root_key or path_key.startswith(root_key + os.sep):
             return True
@@ -34,7 +58,7 @@ def is_path_within_roots(path: str, roots: Iterable[str]) -> bool:
 
 def sanitize_loaded_images(images_data: Iterable[Mapping[str, Any]], allowed_roots: Iterable[str]) -> List[dict]:
     """Filter malformed/untrusted session image records to allowed local roots only."""
-    roots = normalize_session_roots(allowed_roots)
+    roots = sanitize_session_roots(allowed_roots)
     sanitized: List[dict] = []
     for item in images_data:
         if not isinstance(item, Mapping):

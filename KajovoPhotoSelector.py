@@ -98,6 +98,7 @@ from PIL import Image, ImageFile, UnidentifiedImageError
 from kps_security import (
     normalize_session_roots,
     resolve_non_conflicting_path,
+    sanitize_session_roots,
     sanitize_loaded_images,
 )
 
@@ -143,6 +144,15 @@ def wav_duration_ms(filename: str, default_ms: int = 1600) -> int:
 # KONSTANTY A BARVY UI
 # =====================
 APP_NAME = "KájovoPhotoSelector"
+DEFAULT_BUCKET_ALIASES = {
+    "T1": "Kájova hromádka 1",
+    "T2": "Kájova hromádka 2",
+    "T3": "Kájova hromádka 3",
+    "T4": "Kájova hromádka 4",
+    "TRASH": "Kájův koš",
+    "DUPLICITA": "Kájovi dvojníci",
+}
+VALID_BUCKET_CODES = frozenset({"MAIN", *DEFAULT_BUCKET_ALIASES.keys()})
 
 # “Kájův svět” – hravá, moderní, ale stále čitelná paleta
 BG_COLOR = "#0B1020"            # hlubší “noční” modrá
@@ -748,7 +758,7 @@ class Bucket:
 # WORKER PRO NÁHLEDY
 # =====================
 class ThumbWorkerSignals(QObject):
-    finished = pyqtSignal(int, QImage)
+    finished = pyqtSignal(int, str, QImage)
 class ThumbWorker(QRunnable):
     def __init__(self, rec_id: int, path: str, max_size: Tuple[int, int] = (96, 72)):
         super().__init__()
@@ -774,7 +784,7 @@ class ThumbWorker(QRunnable):
             image = reader.read()
             if image.isNull():
                 return
-            self.signals.finished.emit(self.rec_id, image)
+            self.signals.finished.emit(self.rec_id, self.path, image)
         except Exception as e:
             logger.warning("ThumbWorker chyba pro %s: %s", self.path, e)
 # =====================
@@ -1257,8 +1267,11 @@ class DuplicateGroupDialog(QDialog):
             else:
                 lbl.setStyleSheet("border:2px solid transparent;")
     def _on_keep(self):
+        selected_indices = [i for i, sel in enumerate(self.selected) if sel]
+        if not selected_indices:
+            return
         self.choice = "keep_marked"
-        self.selected_indices = [i for i, sel in enumerate(self.selected) if sel]
+        self.selected_indices = selected_indices
         self.accept()
     def _on_skip(self):
         self.choice = "skip"
@@ -1301,12 +1314,7 @@ class MainWindow(QMainWindow):
         self.last_ignore_system: bool = True
         # bucket kód -> Bucket
         self.buckets: Dict[str, Bucket] = {
-            "T1": Bucket("T1", "Kájova hromádka 1"),
-            "T2": Bucket("T2", "Kájova hromádka 2"),
-            "T3": Bucket("T3", "Kájova hromádka 3"),
-            "T4": Bucket("T4", "Kájova hromádka 4"),
-            "TRASH": Bucket("TRASH", "Kájův koš"),
-            "DUPLICITA": Bucket("DUPLICITA", "Kájovi dvojníci"),
+            code: Bucket(code, alias) for code, alias in DEFAULT_BUCKET_ALIASES.items()
         }
         # bucket kód -> widgety
         self.bucket_widgets: Dict[str, Dict[str, QWidget]] = {}
@@ -1689,6 +1697,54 @@ class MainWindow(QMainWindow):
     def clear_dirty(self):
         self.session_dirty = False
         self.update_view_stats()
+
+    def _reset_bucket_metadata(self):
+        for code, bucket in self.buckets.items():
+            bucket.alias = DEFAULT_BUCKET_ALIASES[code]
+            bucket.path = ""
+            bucket.count = 0
+            bucket.size_total = 0
+            w = self.bucket_widgets.get(code)
+            if not w:
+                continue
+            w["lbl_info"].setText("0 souborů / 0 B")
+            if code == "TRASH":
+                w["lbl_path"].setText("Cesta: Kájův koš (systém)")
+            else:
+                w["lbl_path"].setText("Cesta: (není namapováno)")
+            w["group_box"].setTitle(bucket.alias.upper())
+            w["btn_assign"].setText(f"Kájo, hoď to do: {bucket.alias}")
+
+    def _recalculate_bucket_totals(self):
+        for bucket in self.buckets.values():
+            bucket.count = 0
+            bucket.size_total = 0
+        for rec in self.images:
+            if rec.bucket == "MAIN":
+                continue
+            bucket = self.buckets.get(rec.bucket)
+            if bucket is None:
+                continue
+            bucket.count += 1
+            bucket.size_total += rec.size
+        for code in self.buckets:
+            self._update_bucket_stats(code)
+
+    def _remove_records_by_ids(self, record_ids: set[int]):
+        if not record_ids:
+            return
+        self.images = [rec for rec in self.images if rec.id not in record_ids]
+        for rec_id in record_ids:
+            self.image_by_id.pop(rec_id, None)
+            self.item_by_id.pop(rec_id, None)
+            self.thumb_cache.pop(rec_id, None)
+        self._recalculate_bucket_totals()
+
+    def _sanitize_loaded_bucket_code(self, bucket_code: object) -> str:
+        if isinstance(bucket_code, str) and bucket_code in VALID_BUCKET_CODES:
+            return bucket_code
+        return "MAIN"
+
     def reset_state(self):
         logger.info("Reset stavu aplikace.")
         self.images.clear()
@@ -1699,14 +1755,7 @@ class MainWindow(QMainWindow):
         self.next_id = 1
         self.current_view = "MAIN"
         self.session_roots.clear()
-        for b in self.buckets.values():
-            b.count = 0
-            b.size_total = 0
-        for code, w in self.bucket_widgets.items():
-            bucket = self.buckets[code]
-            w["lbl_info"].setText(f"0 souborů / 0 B")
-            if code != "TRASH":
-                w["lbl_path"].setText("Cesta: (není namapováno)")
+        self._reset_bucket_metadata()
         self.clear_dirty()
         self.update_view_header()
     def prompt_unsaved(self) -> str:
@@ -1736,6 +1785,35 @@ class MainWindow(QMainWindow):
         if clicked == discard_btn:
             return "discard"
         return "cancel"
+
+    def confirm_session_roots(self, roots: List[str], image_count: int) -> bool:
+        if not roots:
+            self._kajo_box(
+                "Kájo, session nejde bezpečně obnovit",
+                "Session neobsahuje žádné důvěryhodné zdrojové složky k potvrzení.",
+                kind="warn",
+            )
+            return False
+        roots_text = "\n".join(f"• {root}" for root in roots)
+        clicked = self._kajo_box(
+            "Kájo, potvrď zdrojové složky",
+            "Session chce obnovit fotky z těchto složek:\n\n"
+            f"{roots_text}\n\n"
+            f"Počet nalezených záznamů v session: {image_count}\n\n"
+            "Pokud tyto složky poznáváte, potvrďte je. Jinak načtení zrušte.",
+            kind="warn",
+            buttons=[
+                ("Kájo, potvrzuji tyto složky", QMessageBox.ButtonRole.AcceptRole),
+                ("Kájo, zrušit načtení", QMessageBox.ButtonRole.RejectRole),
+            ],
+            default_index=1,
+            style_buttons={
+                "Kájo, potvrzuji tyto složky": BUTTON_GOLD_QSS,
+                "Kájo, zrušit načtení": BUTTON_PRIMARY_QSS,
+            },
+        )
+        return clicked == "Kájo, potvrzuji tyto složky"
+
     # ---------------- VIEW / HEADER ----------------
     def update_view_header(self):
         if self.current_view == "MAIN":
@@ -1808,9 +1886,10 @@ class MainWindow(QMainWindow):
         worker = ThumbWorker(rec.id, rec.path)
         worker.signals.finished.connect(self.on_thumb_ready)
         self.threadpool.start(worker)
-    @pyqtSlot(int, QImage)
-    def on_thumb_ready(self, rec_id: int, image: QImage):
-        if rec_id not in self.image_by_id:
+    @pyqtSlot(int, str, QImage)
+    def on_thumb_ready(self, rec_id: int, source_path: str, image: QImage):
+        rec = self.image_by_id.get(rec_id)
+        if rec is None or rec.path != source_path:
             return
         pm = QPixmap.fromImage(image)
         self.thumb_cache[rec_id] = pm
@@ -1992,6 +2071,7 @@ class MainWindow(QMainWindow):
         mkb, xkb, ign = opts
         if dir_ not in self.session_roots:
             self.session_roots.append(dir_)
+            self.session_roots = normalize_session_roots(self.session_roots)
         self._scan_directories([dir_], append=True, min_kb=mkb, max_kb=xkb, ignore_system=ign)
     def _scan_directories(
         self,
@@ -2046,21 +2126,28 @@ class MainWindow(QMainWindow):
         min_bytes = min_kb * 1024 if min_kb > 0 else 0
         max_bytes = max_kb * 1024 if max_kb > 0 else 0
         filtered: List[str] = []
+        filter_canceled = False
         for i, p in enumerate(all_paths, start=1):
             if progress_filter.wasCanceled():
                 logger.info("Filtrování přerušeno uživatelem.")
+                filter_canceled = True
                 break
             try:
                 sz = os.path.getsize(p)
             except OSError:
+                progress_filter.update(i)
                 continue
             if min_bytes and sz < min_bytes:
+                progress_filter.update(i)
                 continue
             if max_bytes and sz > max_bytes:
+                progress_filter.update(i)
                 continue
             filtered.append(p)
             progress_filter.update(i)
         progress_filter.close()
+        if filter_canceled:
+            return
         logger.info("Po filtru velikosti zůstává %d souborů.", len(filtered))
         if not filtered:
             self.sfx.play(SFX_ERROR)
@@ -2171,8 +2258,12 @@ class MainWindow(QMainWindow):
             self._kajo_box("Kájo, chyba", "Nepodařilo se načíst session.", kind="err")
             return
         logger.info("Načítám session z %s", path)
+        session_roots = sanitize_session_roots(data.get("roots", []))
+        if not self.confirm_session_roots(session_roots, len(data.get("images", []))):
+            logger.info("Načtení session zrušeno: zdrojové složky nebyly potvrzeny.")
+            return
         self.reset_state()
-        self.session_roots = normalize_session_roots(data.get("roots", []))
+        self.session_roots = session_roots
         self.current_view = data.get("current_view", "MAIN")
         self.last_min_kb = data.get("last_min_kb", 0)
         self.last_max_kb = data.get("last_max_kb", 0)
@@ -2180,28 +2271,35 @@ class MainWindow(QMainWindow):
         buckets_data = data.get("buckets", {})
         for code, cfg in self.buckets.items():
             bd = buckets_data.get(code, {})
-            cfg.alias = bd.get("alias", cfg.alias)
-            cfg.path = bd.get("path", cfg.path)
+            alias = bd.get("alias", cfg.alias)
+            cfg.alias = alias.strip() if isinstance(alias, str) and alias.strip() else DEFAULT_BUCKET_ALIASES[code]
+            # Cílové cesty z JSONu neobnovujeme automaticky; po loadu je musí uživatel potvrdit znovu.
+            cfg.path = ""
             cfg.count = 0
             cfg.size_total = 0
             w = self.bucket_widgets.get(code)
             if w:
                 w["lbl_info"].setText(f"0 souborů / 0 B")
-                if code != "TRASH":
-                    if cfg.path:
-                        w["lbl_path"].setText(f"Cesta: {cfg.path}")
-                    else:
-                        w["lbl_path"].setText("Cesta: (není namapováno)")
+                if code == "TRASH":
+                    w["lbl_path"].setText("Cesta: Kájův koš (systém)")
+                else:
+                    w["lbl_path"].setText("Cesta: (není namapováno)")
                 w["group_box"].setTitle(cfg.alias.upper())
+                w["btn_assign"].setText(f"Kájo, hoď to do: {cfg.alias}")
         images_data = sanitize_loaded_images(data.get("images", []), self.session_roots)
+        used_ids: set[int] = set()
         progress = DagmarProgress("Obnovuji miniatury…", self, len(images_data))
         for i, rec_data in enumerate(images_data, start=1):
             try:
+                raw_id = rec_data.get("id")
+                if not isinstance(raw_id, int) or raw_id <= 0 or raw_id in used_ids:
+                    raw_id = self.next_id
+                bucket_code = self._sanitize_loaded_bucket_code(rec_data.get("bucket", "MAIN"))
                 rec = ImageRecord(
-                    id=rec_data["id"],
+                    id=raw_id,
                     path=rec_data["path"],
                     size=rec_data["size"],
-                    bucket=rec_data.get("bucket", "MAIN"),
+                    bucket=bucket_code,
                     width=rec_data.get("width"),
                     height=rec_data.get("height"),
                 )
@@ -2209,6 +2307,7 @@ class MainWindow(QMainWindow):
                 continue
             self.images.append(rec)
             self.image_by_id[rec.id] = rec
+            used_ids.add(rec.id)
             self.next_id = max(self.next_id, rec.id + 1)
             if rec.bucket != "MAIN":
                 b = self.buckets.get(rec.bucket)
@@ -2490,9 +2589,12 @@ class MainWindow(QMainWindow):
         moved = 0
         trashed = 0
         failed = 0
+        canceled = False
+        completed_ids: set[int] = set()
         for i, (rec, op_type, target) in enumerate(operations, start=1):
             if progress is not None and progress.wasCanceled():
                 logger.info("KájovoPhotoSelector zrušeno uživatelem po %d operacích.", i - 1)
+                canceled = True
                 break
             try:
                 if op_type == "TRASH":
@@ -2503,11 +2605,13 @@ class MainWindow(QMainWindow):
                         os.remove(rec.path)
                         logger.info("SMAZÁNO (bez send2trash): %s", rec.path)
                     trashed += 1
+                    completed_ids.add(rec.id)
                     self._coin_per_file(1)
                 elif op_type == "MOVE":
                     safe_move_file(rec.path, target)
                     logger.info("PŘESUNUTO: %s -> %s", rec.path, target)
                     moved += 1
+                    completed_ids.add(rec.id)
                     self._coin_per_file(1)
                 else:
                     failed += 1
@@ -2519,18 +2623,26 @@ class MainWindow(QMainWindow):
                 progress.update(i)
         if progress is not None:
             progress.close()
+        if completed_ids:
+            self._remove_records_by_ids(completed_ids)
         # po provedení – vyprázdnit vše, jako při startu
         msg_txt = (
             f"Přesunuto: {moved} souborů\n"
             f"Do koše: {trashed} souborů\n"
             f"Chybné operace: {failed}\n"
-            f"Chybějící zdroje: {missing_sources}"
+            f"Chybějící zdroje: {missing_sources}\n"
+            f"Zrušeno uživatelem: {'ano' if canceled else 'ne'}"
         )
         self._kajo_box("Kájo, hotovo", msg_txt, kind="info")
         logger.info("Kájo, hotovo: %s", msg_txt.replace("\n", " | "))
-        # Návrat do výchozího stavu
-        self.reset_state()
-        self._play_reklama_if_exists()
+        if failed == 0 and missing_sources == 0 and not canceled and not self.images:
+            self.reset_state()
+            self._play_reklama_if_exists()
+            return
+        if completed_ids:
+            self.mark_dirty()
+        self.rebuild_list()
+        self.update_view_header()
 
     def _play_reklama_if_exists(self):
         src = resource_path("reklama.mp4")
