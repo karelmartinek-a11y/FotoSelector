@@ -4,6 +4,7 @@
 - `tests/test_security_regressions.py`: path safety, session root sanitizace a kolize cílových cest.
 - `tests/test_app_regressions.py`: kritické regresní větve GUI logiky bez interaktivních dialogů.
 - `tests/test_e2e_smoke.py`: headless E2E smoke flow přes toolbar tlačítka a PyQt event loop.
+- `tests/support.py`: sdílené headless Qt helpery a test image fixture helper.
 
 ## Lokální příkazy
 ```bash

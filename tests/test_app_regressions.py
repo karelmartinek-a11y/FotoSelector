@@ -10,7 +10,7 @@ from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import QApplication
 
 from KajovoPhotoSelector import DEFAULT_BUCKET_ALIASES, DuplicateGroupDialog, ImageRecord, MainWindow
-from test_support import (
+from support import (
     APP,
     AlwaysCanceledProgress,
     CancelAfterFirstProgress,

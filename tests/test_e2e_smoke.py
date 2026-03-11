@@ -11,7 +11,7 @@ from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 from KajovoPhotoSelector import MainWindow
-from test_support import APP, DummyProgress, DummyScanDialog, DummySfx, write_test_image
+from support import APP, DummyProgress, DummyScanDialog, DummySfx, write_test_image
 
 
 class AutoDuplicateDialog:
