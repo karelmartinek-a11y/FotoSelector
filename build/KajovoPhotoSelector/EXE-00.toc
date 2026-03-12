@@ -67,7 +67,7 @@
  [],
  False,
  False,
- 1773353941,
+ 1773354905,
  [('runw.exe',
    'C:\\GitHub\\KajovoPhotoSelector\\venv\\Lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\runw.exe',
    'EXECUTABLE')],
