@@ -23,3 +23,11 @@
 - No Git history is present here, so there is no established commit message convention. Use short, imperative subjects (e.g., "Add bucket rename shortcut") or Conventional Commits if you introduce history.
 - PRs should describe user-facing changes, include screenshots for UI updates, and list manual test steps; call out any file-deletion risks explicitly.
 - Token pro GitHub karelmartinek-a11y/FotoSelector je ulozen mimo repozitar. Pokud je potreba, pouzijte vlastni prihlaseni nebo lokalne dostupny pristupovy token.
+
+
+## Kodovani A Cestina
+
+- Vsechny textove soubory, zdrojove kody, konfigurace, prompty, dokumentace a poznamky se musi vytvaret a upravovat v `UTF-8 bez BOM`.
+- Pokud uzivatel vyslovne neurci jinak, komunikace s uzivatelem musi byt v cestine.
+- Dokumentace se musi psat v cestine.
+- Poznamky a komentare v kodu se musi psat v cestine.
