@@ -48,6 +48,7 @@ from PyQt6.QtGui import (
     QFont,
     QCursor,
     QFontMetrics,
+    QPen,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -65,6 +66,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QInputDialog,
     QProgressDialog,
+    QProgressBar,
     QLineEdit,
     QCheckBox,
     QSpinBox,
@@ -77,6 +79,7 @@ from PyQt6.QtWidgets import (
     QGraphicsOpacityEffect,
     QGraphicsDropShadowEffect,
     QRubberBand,
+    QSizePolicy,
 )
 
 try:
@@ -266,6 +269,176 @@ QProgressDialog {{
     border-radius: 8px;
 }}
 """
+DIALOG_WIDGET_QSS = f"""
+QDialog, QFileDialog {{
+    background-color: {SURFACE_COLOR};
+    color: {TEXT_COLOR};
+}}
+QLabel {{
+    color: {TEXT_COLOR};
+}}
+QLabel[dialogRole="title"] {{
+    color: {ACCENT_COLOR};
+    font-size: 19px;
+    font-weight: 900;
+}}
+QLabel[dialogRole="subtitle"] {{
+    color: {SUBTEXT_COLOR};
+    font-size: 12px;
+    font-weight: 650;
+}}
+QLineEdit, QSpinBox {{
+    min-height: 42px;
+    padding: 8px 12px;
+    border-radius: {RADIUS}px;
+    border: 1px solid #31406F;
+    background-color: #0E1630;
+    color: {TEXT_COLOR};
+    selection-background-color: {PRIMARY_COLOR};
+}}
+QLineEdit:focus, QSpinBox:focus {{
+    border: 1px solid {ACCENT_COLOR};
+}}
+QCheckBox {{
+    color: {TEXT_COLOR};
+    spacing: 10px;
+    padding: 4px 0;
+}}
+QCheckBox::indicator {{
+    width: 18px;
+    height: 18px;
+}}
+QCheckBox::indicator:unchecked {{
+    border: 1px solid #3D4F88;
+    border-radius: 5px;
+    background-color: #0E1630;
+}}
+QCheckBox::indicator:checked {{
+    border: 1px solid {ACCENT_COLOR};
+    border-radius: 5px;
+    background-color: {ACCENT_COLOR};
+}}
+QScrollArea {{
+    border: 1px solid #25305A;
+    border-radius: {RADIUS}px;
+    background-color: #0E1630;
+}}
+QFrame[dialogCard="true"] {{
+    background-color: #0E1630;
+    border: 1px solid #25305A;
+    border-radius: {RADIUS}px;
+}}
+QFileDialog QListView, QFileDialog QTreeView {{
+    background-color: #0E1630;
+    color: {TEXT_COLOR};
+    border: 1px solid #25305A;
+}}
+"""
+DIALOG_DIVIDER_QSS = "background-color: #25305A; min-height: 1px; max-height: 1px;"
+DIALOG_CARD_QSS = "background-color: #0E1630; border: 1px solid #25305A; border-radius: 14px;"
+DIALOG_STATUS_QSS = f"color:{SUBTEXT_COLOR}; font-weight: 650;"
+DIALOG_INFO_QSS = f"color:{TEXT_COLOR}; font-weight: 700;"
+DIALOG_WARN_QSS = f"color:{ACCENT_COLOR}; font-weight: 800;"
+DIALOG_ERROR_QSS = "color:#FF8A80; font-weight: 800;"
+
+
+def dialog_button_qss(kind: str) -> str:
+    mapping = {
+        "primary": BUTTON_PRIMARY_QSS,
+        "accent": BUTTON_GOLD_QSS,
+        "surface": BUTTON_SURFACE_QSS,
+        "danger": BUTTON_DANGER_QSS,
+    }
+    return mapping.get(kind, BUTTON_SURFACE_QSS)
+
+
+def style_dialog_button(button: Optional[QAbstractButton], kind: str = "surface"):
+    if button is None:
+        return
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    button.setMinimumHeight(44)
+    button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
+    button.setStyleSheet(dialog_button_qss(kind))
+    if isinstance(button, QPushButton):
+        button.setAutoDefault(False)
+        button.setDefault(False)
+
+
+def style_dialog_button_box(
+    box: QDialogButtonBox,
+    accept_text: str = "Potvrdit",
+    reject_text: str = "Zrušit",
+    accept_kind: str = "accent",
+    reject_kind: str = "surface",
+):
+    ok_btn = box.button(QDialogButtonBox.StandardButton.Ok)
+    cancel_btn = box.button(QDialogButtonBox.StandardButton.Cancel)
+    if ok_btn is not None:
+        ok_btn.setText(accept_text)
+        style_dialog_button(ok_btn, accept_kind)
+    if cancel_btn is not None:
+        cancel_btn.setText(reject_text)
+        style_dialog_button(cancel_btn, reject_kind)
+
+
+def apply_dialog_theme(widget: QWidget, extra_w: int = 0, extra_h: int = 0):
+    try:
+        widget.setWindowIcon(load_app_icon())
+    except Exception:
+        pass
+    widget.setStyleSheet(DIALOG_WIDGET_QSS + DIALOG_FRAME_QSS)
+    apply_dialog_sizing(widget, extra_w=extra_w, extra_h=extra_h)
+
+
+def make_dialog_header(title: str, subtitle: str = "") -> QWidget:
+    wrapper = QWidget()
+    layout = QVBoxLayout(wrapper)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(4)
+
+    lbl_title = QLabel(title)
+    lbl_title.setProperty("dialogRole", "title")
+    layout.addWidget(lbl_title)
+
+    if subtitle:
+        lbl_subtitle = QLabel(subtitle)
+        lbl_subtitle.setProperty("dialogRole", "subtitle")
+        lbl_subtitle.setWordWrap(True)
+        layout.addWidget(lbl_subtitle)
+
+    divider = QFrame()
+    divider.setStyleSheet(DIALOG_DIVIDER_QSS)
+    layout.addWidget(divider)
+    return wrapper
+
+
+def make_dialog_card() -> QWidget:
+    card = QFrame()
+    card.setProperty("dialogCard", "true")
+    card.setStyleSheet(DIALOG_CARD_QSS)
+    return card
+
+
+def configure_file_dialog(
+    dialog: QFileDialog,
+    title: str,
+    accept_text: str,
+    reject_text: str = "Zrušit",
+):
+    dialog.setWindowTitle(title)
+    dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+    dialog.setLabelText(QFileDialog.DialogLabel.Accept, accept_text)
+    dialog.setLabelText(QFileDialog.DialogLabel.Reject, reject_text)
+    apply_dialog_theme(dialog, extra_h=180)
+    for btn in dialog.findChildren(QPushButton):
+        caption = btn.text().strip()
+        if caption == accept_text:
+            style_dialog_button(btn, "accent")
+        elif caption == reject_text:
+            style_dialog_button(btn, "surface")
+        else:
+            style_dialog_button(btn, "surface")
 # =====================
 # LOGOVÁNÍ
 # =====================
@@ -790,41 +963,373 @@ class ThumbWorker(QRunnable):
 # =====================
 # PROGRESS DIALOG
 # =====================
-class DagmarProgress(QProgressDialog):
-    def __init__(self, text: str, parent: QWidget, maximum: int):
-        super().__init__("", "Zrušit", 0, maximum, parent)
-        self.setWindowTitle("KájovoPhotoSelector – průběh")
+class SpinnerWidget(QWidget):
+    def __init__(self, parent: Optional[QWidget] = None, size: int = 30):
+        super().__init__(parent)
+        self._angle = 0
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._advance)
+        self._timer.start(90)
+        self.setFixedSize(size, size)
+
+    def _advance(self):
+        self._angle = (self._angle + 30) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.translate(self.width() / 2, self.height() / 2)
+
+        outer = min(self.width(), self.height()) / 2 - 2
+        inner = outer * 0.45
+        pen = QPen()
+        pen.setWidth(3)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+
+        for index in range(12):
+            alpha = int(30 + ((index + 1) / 12) * 210)
+            pen.setColor(QColor(255, 213, 79, alpha))
+            painter.setPen(pen)
+            painter.save()
+            painter.rotate(self._angle - index * 30)
+            painter.drawLine(0, int(-inner), 0, int(-outer))
+            painter.restore()
+
+
+class KajoChoiceDialog(QDialog):
+    def __init__(
+        self,
+        parent: QWidget,
+        title: str,
+        text: str,
+        kind: str = "info",
+        subtitle: str = "",
+        buttons: Optional[List[Tuple[str, QMessageBox.ButtonRole]]] = None,
+        default_index: int = 0,
+        style_buttons: Optional[Dict[str, str]] = None,
+    ):
+        super().__init__(parent)
+        self._clicked_label: Optional[str] = None
+        self._buttons: List[QPushButton] = []
+        self.setModal(True)
+        self.setWindowTitle(title)
+        apply_dialog_theme(self, extra_h=170)
+
+        kind_subtitles = {
+            "info": "Jednotný dialog Kájova světa bez systémových zvuků a překvapení.",
+            "warn": "Zkontrolujte text níže. Potvrzovací tlačítka jsou sjednocená a bezpečná.",
+            "err": "Nastala chyba. Dialog je bez systémového zvuku a zachovává stejné ovládání.",
+        }
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
+        layout.addWidget(make_dialog_header(title, subtitle or kind_subtitles.get(kind, "")))
+
+        card = make_dialog_card()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setSpacing(12)
+
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        body_styles = {
+            "info": DIALOG_INFO_QSS,
+            "warn": DIALOG_WARN_QSS,
+            "err": DIALOG_ERROR_QSS,
+        }
+        lbl.setStyleSheet(body_styles.get(kind, DIALOG_INFO_QSS))
+        card_layout.addWidget(lbl)
+        layout.addWidget(card)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.addStretch(1)
+
+        if not buttons:
+            buttons = [("OK", QMessageBox.ButtonRole.AcceptRole)]
+
+        for index, (caption, role) in enumerate(buttons):
+            btn = QPushButton(caption)
+            explicit_style = style_buttons.get(caption) if style_buttons else None
+            if explicit_style:
+                style_dialog_button(btn, "surface")
+                btn.setStyleSheet(explicit_style)
+            else:
+                role_kind = {
+                    QMessageBox.ButtonRole.AcceptRole: "accent",
+                    QMessageBox.ButtonRole.YesRole: "accent",
+                    QMessageBox.ButtonRole.ApplyRole: "accent",
+                    QMessageBox.ButtonRole.RejectRole: "surface",
+                    QMessageBox.ButtonRole.NoRole: "surface",
+                    QMessageBox.ButtonRole.ResetRole: "surface",
+                    QMessageBox.ButtonRole.DestructiveRole: "danger",
+                }.get(role, "surface")
+                style_dialog_button(btn, role_kind)
+            btn.clicked.connect(lambda _, text_value=caption, btn_role=role: self._finish(text_value, btn_role))
+            if index == default_index:
+                btn.setDefault(True)
+                btn.setAutoDefault(True)
+                btn.setFocus()
+            self._buttons.append(btn)
+            btn_layout.addWidget(btn)
+
+        layout.addLayout(btn_layout)
+
+    def _finish(self, label: str, role: QMessageBox.ButtonRole):
+        self._clicked_label = label
+        if role in (
+            QMessageBox.ButtonRole.RejectRole,
+            QMessageBox.ButtonRole.NoRole,
+            QMessageBox.ButtonRole.ResetRole,
+        ):
+            self.reject()
+            return
+        self.accept()
+
+    def selected_label(self) -> Optional[str]:
+        return self._clicked_label
+
+    def reject(self):
+        self._clicked_label = None
+        super().reject()
+
+    def closeEvent(self, event):
+        self._clicked_label = None
+        event.accept()
+        super().closeEvent(event)
+
+
+class KajoTextInputDialog(QDialog):
+    def __init__(
+        self,
+        parent: QWidget,
+        title: str,
+        label: str,
+        value: str = "",
+        confirm_text: str = "Uložit název",
+        cancel_text: str = "Zrušit",
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        apply_dialog_theme(self, extra_h=170)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
+        layout.addWidget(make_dialog_header(title, "Jednotný vstupní dialog pro rychlé přejmenování bez systémového popupu."))
+
+        card = make_dialog_card()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setSpacing(10)
+
+        lbl = QLabel(label)
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet(DIALOG_INFO_QSS)
+        card_layout.addWidget(lbl)
+
+        self.edit = QLineEdit()
+        self.edit.setText(value)
+        self.edit.setPlaceholderText("Zadejte nový název")
+        self.edit.selectAll()
+        self.edit.returnPressed.connect(self.accept)
+        card_layout.addWidget(self.edit)
+
+        note = QLabel("Doporučení: kratší názvy se lépe vejdou do titulku hromádky.")
+        note.setWordWrap(True)
+        note.setStyleSheet(DIALOG_STATUS_QSS)
+        card_layout.addWidget(note)
+        layout.addWidget(card)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self.btn_cancel = QPushButton(cancel_text)
+        self.btn_ok = QPushButton(confirm_text)
+        style_dialog_button(self.btn_cancel, "surface")
+        style_dialog_button(self.btn_ok, "accent")
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_ok.clicked.connect(self.accept)
+        btn_row.addWidget(self.btn_cancel)
+        btn_row.addWidget(self.btn_ok)
+        layout.addLayout(btn_row)
+
+    def text_value(self) -> str:
+        return self.edit.text().strip()
+
+    def reject(self):
+        self.edit.clearFocus()
+        super().reject()
+
+    def closeEvent(self, event):
+        self.edit.clearFocus()
+        event.accept()
+        super().closeEvent(event)
+
+
+class DagmarProgress(QDialog):
+    def __init__(self, text: str, parent: QWidget, maximum: int = 0):
+        super().__init__(parent)
+        self.setWindowTitle("KájovoPhotoSelector – průběh operace")
+        self.setModal(True)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
-        self.setMinimumDuration(0)
-        self.setAutoClose(False)
-        self.setAutoReset(False)
-        self.setStyleSheet(PROGRESS_QSS + DIALOG_FRAME_QSS)
-        apply_dialog_sizing(self, extra_h=140)
-        self.base_text = text
-        self.start_time = time.time()
-        self.last_update = self.start_time
-        self.setLabelText(text)
-        self.setValue(0)
-    def update(self, current: int):
-        if self.maximum() <= 0:
-            self.setMaximum(1)
-        if current > self.maximum():
-            current = self.maximum()
-        now = time.time()
-        elapsed = now - self.start_time
-        if current > 0:
-            total_est = (elapsed / current) * self.maximum()
-            remaining = total_est - elapsed
-        else:
-            remaining = 0
-        percent = (current / self.maximum()) * 100 if self.maximum() > 0 else 0.0
-        self.setLabelText(
-            f"{self.base_text}\n"
-            f"Hotovo: {current}/{self.maximum()} ({percent:.1f} %)\n"
-            f"Uteklo: {format_seconds(elapsed)}, zbývá ~{format_seconds(max(0, remaining))}"
-        )
-        self.setValue(current)
+        self._base_text = text
+        self._detail_text = ""
+        self._maximum = max(0, int(maximum))
+        self._value = 0
+        self._cancel_requested = False
+        self._closing_normally = False
+        self._start_time = time.time()
+
+        apply_dialog_theme(self, extra_h=210)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
+        layout.addWidget(make_dialog_header("Probíhá operace", "Dialog lze kdykoli zavřít. Zavření okamžitě vyžádá přerušení běhu."))
+
+        card = make_dialog_card()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setSpacing(14)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(12)
+        self.spinner = SpinnerWidget(card, size=30)
+        top_row.addWidget(self.spinner, alignment=Qt.AlignmentFlag.AlignTop)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(6)
+        self.lbl_text = QLabel(text)
+        self.lbl_text.setWordWrap(True)
+        self.lbl_text.setStyleSheet(DIALOG_INFO_QSS)
+        text_col.addWidget(self.lbl_text)
+
+        self.lbl_metrics = QLabel("")
+        self.lbl_metrics.setWordWrap(True)
+        self.lbl_metrics.setStyleSheet(DIALOG_STATUS_QSS)
+        text_col.addWidget(self.lbl_metrics)
+        top_row.addLayout(text_col, stretch=1)
+        card_layout.addLayout(top_row)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setStyleSheet(PROGRESS_QSS)
+        self.progress_bar.setTextVisible(True)
+        card_layout.addWidget(self.progress_bar)
+
+        self.lbl_detail = QLabel("")
+        self.lbl_detail.setWordWrap(True)
+        self.lbl_detail.setStyleSheet(DIALOG_STATUS_QSS)
+        card_layout.addWidget(self.lbl_detail)
+        layout.addWidget(card)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self.btn_cancel = QPushButton("Přerušit operaci")
+        style_dialog_button(self.btn_cancel, "danger")
+        self.btn_cancel.clicked.connect(self.request_cancel)
+        btn_row.addWidget(self.btn_cancel)
+        layout.addLayout(btn_row)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._refresh_status)
+        self._timer.start(150)
+
+        self.set_maximum(self._maximum)
+        self._refresh_status()
+        self.show()
+        self.raise_()
         QApplication.processEvents()
+
+    def set_base_text(self, text: str):
+        self._base_text = text
+        self.lbl_text.setText(text)
+        self._refresh_status()
+
+    def set_detail_text(self, detail: str):
+        self._detail_text = detail.strip()
+        self.lbl_detail.setText(self._detail_text)
+        QApplication.processEvents()
+
+    def set_maximum(self, maximum: int):
+        self._maximum = max(0, int(maximum))
+        if self._maximum > 0:
+            self.progress_bar.setRange(0, self._maximum)
+            self.progress_bar.setValue(min(self._value, self._maximum))
+        else:
+            self.progress_bar.setRange(0, 0)
+        self._refresh_status()
+
+    def maximum(self) -> int:
+        return self._maximum
+
+    def update(self, current: int, detail_text: str = ""):
+        if detail_text:
+            self._detail_text = detail_text.strip()
+            self.lbl_detail.setText(self._detail_text)
+        if self._maximum > 0:
+            self._value = max(0, min(int(current), self._maximum))
+            self.progress_bar.setValue(self._value)
+        else:
+            self._value = max(0, int(current))
+        self._refresh_status()
+        QApplication.processEvents()
+
+    def _refresh_status(self):
+        elapsed = max(0.0, time.time() - self._start_time)
+        if self._maximum > 0:
+            percent = (self._value / self._maximum) * 100 if self._maximum else 0.0
+            if self._value > 0:
+                total_est = (elapsed / self._value) * self._maximum
+                remaining = max(0.0, total_est - elapsed)
+                remain_text = f"Odhad do konce: {format_seconds(remaining)}"
+            else:
+                remain_text = "Odhad do konce: připravuji výpočet"
+            metrics = (
+                f"Hotovo: {self._value}/{self._maximum} ({percent:.1f} %)\n"
+                f"Uplynulo: {format_seconds(elapsed)}\n"
+                f"{remain_text}"
+            )
+        else:
+            metrics = (
+                "Postup: zjišťuji rozsah práce\n"
+                f"Uplynulo: {format_seconds(elapsed)}\n"
+                "Odhad do konce: zatím nelze určit, proto běží spinner"
+            )
+        if self._cancel_requested:
+            metrics += "\nPřerušení bylo vyžádáno. Operace se bezpečně ukončuje."
+        self.lbl_metrics.setText(metrics)
+        if self._detail_text:
+            self.lbl_detail.setText(self._detail_text)
+
+    def request_cancel(self):
+        if self._cancel_requested:
+            return
+        self._cancel_requested = True
+        self.btn_cancel.setEnabled(False)
+        self.btn_cancel.setText("Přerušování…")
+        self._refresh_status()
+        self.hide()
+        QApplication.processEvents()
+
+    def wasCanceled(self) -> bool:
+        QApplication.processEvents()
+        return self._cancel_requested
+
+    def complete(self):
+        self._closing_normally = True
+        self._timer.stop()
+        self.close()
+
+    def closeEvent(self, event):
+        if not self._closing_normally:
+            self.request_cancel()
+        self._timer.stop()
+        event.accept()
+
+
 # =====================
 # DIALOG PRO NASTAVENÍ SKENU
 # =====================
@@ -833,18 +1338,30 @@ class ScanOptionsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Nastavení skenování")
         self.setModal(True)
-        self.setStyleSheet(DIALOG_FRAME_QSS)
-        apply_dialog_sizing(self, extra_h=120)
+        apply_dialog_theme(self, extra_h=180)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
+        layout.addWidget(make_dialog_header("Nastavení skenování", "Tento dialog sjednocuje vzhled všech voleb před spuštěním skenu."))
+
+        card = make_dialog_card()
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(18, 18, 18, 18)
+        card_layout.setSpacing(14)
+
         row1 = QHBoxLayout()
+        row1.setSpacing(10)
         lbl_min = QLabel("Min. velikost (kB, 0 = bez limitu):")
+        lbl_min.setStyleSheet(DIALOG_INFO_QSS)
         self.spin_min = QSpinBox()
         self.spin_min.setRange(0, 1024 * 1024)
         self.spin_min.setValue(last_min_kb)
         row1.addWidget(lbl_min)
         row1.addWidget(self.spin_min)
         row2 = QHBoxLayout()
+        row2.setSpacing(10)
         lbl_max = QLabel("Max. velikost (kB, 0 = bez limitu):")
+        lbl_max.setStyleSheet(DIALOG_INFO_QSS)
         self.spin_max = QSpinBox()
         self.spin_max.setRange(0, 1024 * 1024)
         self.spin_max.setValue(last_max_kb)
@@ -852,19 +1369,42 @@ class ScanOptionsDialog(QDialog):
         row2.addWidget(self.spin_max)
         self.chk_ignore_system = QCheckBox("Ignorovat systémové / instalační obrázky")
         self.chk_ignore_system.setChecked(last_ignore_system)
-        self.chk_ignore_system.setStyleSheet("color:white;background-color:#151821;padding:4px;")
-        layout.addLayout(row1)
-        layout.addLayout(row2)
-        layout.addWidget(self.chk_ignore_system)
+        card_layout.addLayout(row1)
+        card_layout.addLayout(row2)
+        card_layout.addWidget(self.chk_ignore_system)
+
+        helper = QLabel(
+            "Při neznámém rozsahu adresářů poběží spinner, aby bylo zřejmé, že aplikace stále pracuje."
+        )
+        helper.setWordWrap(True)
+        helper.setStyleSheet(DIALOG_STATUS_QSS)
+        card_layout.addWidget(helper)
+        layout.addWidget(card)
+
         btns = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             parent=self,
         )
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
+        style_dialog_button_box(
+            btns,
+            accept_text="Spustit sken",
+            reject_text="Zrušit",
+            accept_kind="accent",
+            reject_kind="surface",
+        )
         layout.addWidget(btns)
+
     def get_values(self) -> Tuple[int, int, bool]:
         return self.spin_min.value(), self.spin_max.value(), self.chk_ignore_system.isChecked()
+
+    def reject(self):
+        super().reject()
+
+    def closeEvent(self, event):
+        event.accept()
+        super().closeEvent(event)
 # =====================
 # DIALOG PRO DUPLICITY
 # =====================
@@ -1052,6 +1592,17 @@ class BucketDropGroupBox(QGroupBox):
             self.main_window.assign_ids_to_bucket(self.code, ids)
         event.acceptProposedAction()
 
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.code in ["T1", "T2", "T3", "T4"]
+            and event.position().y() <= 32
+        ):
+            self.main_window.rename_bucket(self.code)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
 
 class ExitDissolveOverlay(QWidget):
     finished = pyqtSignal()
@@ -1124,12 +1675,6 @@ class ExitDissolveOverlay(QWidget):
         painter = QPainter(self)
         painter.drawPixmap(0, 0, self._pixmap)
 
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            if self.code in ["T1", "T2", "T3", "T4"]:
-                self.main_window.rename_bucket(self.code)
-        super().mouseDoubleClickEvent(event)
-
 
 class ClickableLabel(QLabel):
     clicked = pyqtSignal()
@@ -1137,37 +1682,60 @@ class ClickableLabel(QLabel):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
+
+
 class DuplicateGroupDialog(QDialog):
-    """
-    Zobrazí jednu skupinu duplicit s možností:
-    - označit položky k zachování,
-    - přeskočit,
-    - smazat všechny (do virtuálního Koše),
-    - auto (Petře, udělej to za mě),
-    - storno.
-    """
     def __init__(self, parent: QWidget, group_index: int, total_groups: int, records: List[ImageRecord]):
         super().__init__(parent)
-        self.setWindowTitle("Nalezené duplicity")
+        self.setWindowTitle("Vyhodnocení duplicit")
         self.setModal(True)
-        self.setStyleSheet(DIALOG_FRAME_QSS)
-        apply_dialog_sizing(self, extra_h=160)
+        apply_dialog_theme(self, extra_h=220)
         self.records = records
         self.selected_indices: List[int] = []
+        self.choice: str = "skip"  # keep_marked, skip, trash_all, auto_all, abort
+        self._best_index = 0
+
         layout = QVBoxLayout(self)
-        header = QLabel(f"{group_index + 1}. redundance z {total_groups}")
-        header.setStyleSheet(f"color:{ACCENT_COLOR};font-weight:bold;")
-        layout.addWidget(header)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
+        layout.addWidget(
+            make_dialog_header(
+                f"Skupina duplicit {group_index + 1} z {total_groups}",
+                "Vyberte fotografii, která má zůstat v hlavním pohledu. Ostatní snímky přesunu do přihrádky Duplicita.",
+            )
+        )
+
+        summary_card = make_dialog_card()
+        summary_layout = QVBoxLayout(summary_card)
+        summary_layout.setContentsMargins(18, 18, 18, 18)
+        summary_layout.setSpacing(10)
+
+        summary = QLabel(
+            "Automatický návrh předvybere největší soubor jako pravděpodobně nejkvalitnější variantu. "
+            "Dialog je možné bezpečně zavřít i křížkem, čímž se zpracování duplicit okamžitě zastaví."
+        )
+        summary.setWordWrap(True)
+        summary.setStyleSheet(DIALOG_STATUS_QSS)
+        summary_layout.addWidget(summary)
+        layout.addWidget(summary_card)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         inner = QWidget()
         grid = QGridLayout(inner)
+        grid.setHorizontalSpacing(14)
+        grid.setVerticalSpacing(14)
+
         # Heuristika pro kvalitu: větší velikost souboru
-        best_index = 0
         if records:
-            best_index = max(range(len(records)), key=lambda i: records[i].size)
+            self._best_index = max(range(len(records)), key=lambda i: records[i].size)
+
+        self.cards: List[QFrame] = []
         self.lbls: List[ClickableLabel] = []
+        self.info_labels: List[QLabel] = []
         self.selected: List[bool] = []
+
         # připravit šachovnicové pozadí pro miniatury
         checker = QPixmap(8, 8)
         checker.fill(QColor("#555555"))
@@ -1176,17 +1744,25 @@ class DuplicateGroupDialog(QDialog):
         painter.fillRect(4, 4, 4, 4, QColor("#777777"))
         painter.end()
         checker_brush = QBrush(checker)
+
         for i, rec in enumerate(records):
-            vbox = QVBoxLayout()
+            card = QFrame()
+            card.setStyleSheet(DIALOG_CARD_QSS)
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 14, 14, 14)
+            card_layout.setSpacing(10)
+
             img_label = ClickableLabel()
             img_label.setFixedSize(96, 72)
             img_label.setFrameShape(QFrame.Shape.Box)
             img_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             img_label.setAutoFillBackground(True)
+            img_label.setCursor(Qt.CursorShape.PointingHandCursor)
             pal = img_label.palette()
             pal.setBrush(QPalette.ColorRole.Window, checker_brush)
             img_label.setPalette(pal)
-            img_label.setStyleSheet("border: 2px solid transparent;")
+            img_label.setStyleSheet("border: 2px solid transparent; border-radius: 10px;")
+
             base = os.path.basename(rec.path)
             d = os.path.dirname(rec.path)
             if len(base) > 20:
@@ -1197,44 +1773,71 @@ class DuplicateGroupDialog(QDialog):
                 d_disp = "…" + d[-23:]
             else:
                 d_disp = d
+
             info = QLabel(
                 f"{base_disp}\n"
                 f"{d_disp}\n"
                 f"{human_size(rec.size)}"
             )
             info.setWordWrap(True)
+            info.setStyleSheet(DIALOG_INFO_QSS)
+
+            hint = QLabel(
+                "Doporučeno k zachování" if i == self._best_index else "Kliknutím označíte tuto variantu"
+            )
+            hint.setWordWrap(True)
+            hint.setStyleSheet(DIALOG_WARN_QSS if i == self._best_index else DIALOG_STATUS_QSS)
+
+            self.cards.append(card)
             self.lbls.append(img_label)
+            self.info_labels.append(info)
             self.selected.append(False)
+
             def make_handler(index: int):
                 def handler():
                     self._toggle_selection(index)
                 return handler
+
             img_label.clicked.connect(make_handler(i))
-            vbox.addWidget(img_label)
-            vbox.addWidget(info)
-            grid.addLayout(vbox, i // 3, i % 3)
+            card_layout.addWidget(img_label, alignment=Qt.AlignmentFlag.AlignHCenter)
+            card_layout.addWidget(info)
+            card_layout.addWidget(hint)
+            grid.addWidget(card, i // 3, i % 3)
+
         scroll.setWidget(inner)
         layout.addWidget(scroll)
+
+        footer = QLabel(
+            "Potvrzení přesune všechny nevybrané snímky této skupiny do přihrádky Duplicita. "
+            "K fyzickému přesunu na disk dojde až po volbě „Kájo, proveď to“."
+        )
+        footer.setWordWrap(True)
+        footer.setStyleSheet(DIALOG_STATUS_QSS)
+        layout.addWidget(footer)
+
         btns_layout = QHBoxLayout()
-        self.btn_keep = AnimatedPushButton("Kájo, nech označenou")
-        self.btn_skip = AnimatedPushButton("Kájo, přeskoč to")
-        self.btn_trash = AnimatedPushButton("Kájo, vyhoď všechny")
-        self.btn_auto = AnimatedPushButton("Kájo, vyřeš to za mě…")
+        btns_layout.setSpacing(10)
         self.btn_cancel = AnimatedPushButton("Kájo, stop")
-        self.btn_keep.setStyleSheet(BUTTON_PRIMARY_QSS)
-        self.btn_skip.setStyleSheet(BUTTON_SURFACE_QSS)
-        self.btn_trash.setStyleSheet(BUTTON_DANGER_QSS)
-        self.btn_auto.setStyleSheet(BUTTON_GOLD_QSS)
+        self.btn_skip = AnimatedPushButton("Kájo, přeskoč skupinu")
+        self.btn_trash = AnimatedPushButton("Kájo, dej vše do duplicity")
+        self.btn_auto = AnimatedPushButton("Kájo, vyřeš to za mě…")
+        self.btn_keep = AnimatedPushButton("Kájo, nech označenou")
+
         self.btn_cancel.setStyleSheet(BUTTON_SURFACE_QSS)
-        for b in [self.btn_keep, self.btn_skip, self.btn_trash, self.btn_auto, self.btn_cancel]:
+        self.btn_skip.setStyleSheet(BUTTON_SURFACE_QSS)
+        self.btn_trash.setStyleSheet(BUTTON_PRIMARY_QSS)
+        self.btn_auto.setStyleSheet(BUTTON_GOLD_QSS)
+        self.btn_keep.setStyleSheet(BUTTON_GOLD_QSS)
+        for b in [self.btn_cancel, self.btn_skip, self.btn_trash, self.btn_auto, self.btn_keep]:
             btns_layout.addWidget(b)
         layout.addLayout(btns_layout)
-        self.choice: str = "skip"  # keep_marked, skip, trash_all, auto_all, abort
+
         self.btn_keep.clicked.connect(self._on_keep)
         self.btn_skip.clicked.connect(self._on_skip)
         self.btn_trash.clicked.connect(self._on_trash)
         self.btn_auto.clicked.connect(self._on_auto)
         self.btn_cancel.clicked.connect(self._on_cancel)
+
         # miniatury v tomto dialogu – jednoduché, synchronní, jen pár souborů
         for i, rec in enumerate(records):
             if os.path.exists(rec.path):
@@ -1244,11 +1847,19 @@ class DuplicateGroupDialog(QDialog):
                 img = reader.read()
                 if not img.isNull():
                     pm = QPixmap.fromImage(img)
-                    self.lbls[i].setPixmap(pm.scaled(96, 72, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                    self.lbls[i].setPixmap(
+                        pm.scaled(
+                            96,
+                            72,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation,
+                        )
+                    )
                     self.lbls[i].setToolTip(f"{rec.path}\n{human_size(rec.size)}")
                     self.lbls[i].setMouseTracking(True)
         if records:
-            self._toggle_selection(best_index, force_state=True, state=True)
+            self._toggle_selection(self._best_index, force_state=True, state=True)
+
     def _toggle_selection(self, index: int, force_state: bool = False, state: bool = False):
         if index < 0 or index >= len(self.lbls):
             return
@@ -1263,9 +1874,19 @@ class DuplicateGroupDialog(QDialog):
             self.selected[index] = False
         for i, lbl in enumerate(self.lbls):
             if self.selected[i]:
-                lbl.setStyleSheet(f"border:2px solid {ACCENT_COLOR};")
+                self.cards[i].setStyleSheet(
+                    f"{DIALOG_CARD_QSS} border: 2px solid {ACCENT_COLOR}; background-color: rgba(255, 213, 79, 20);"
+                )
+                lbl.setStyleSheet(f"border:2px solid {ACCENT_COLOR}; border-radius: 10px;")
+                self.info_labels[i].setStyleSheet(DIALOG_WARN_QSS)
             else:
-                lbl.setStyleSheet("border:2px solid transparent;")
+                self.cards[i].setStyleSheet(DIALOG_CARD_QSS)
+                lbl.setStyleSheet("border:2px solid transparent; border-radius: 10px;")
+                if i == self._best_index:
+                    self.info_labels[i].setStyleSheet(DIALOG_INFO_QSS)
+                else:
+                    self.info_labels[i].setStyleSheet(DIALOG_INFO_QSS)
+
     def _on_keep(self):
         selected_indices = [i for i, sel in enumerate(self.selected) if sel]
         if not selected_indices:
@@ -1273,18 +1894,31 @@ class DuplicateGroupDialog(QDialog):
         self.choice = "keep_marked"
         self.selected_indices = selected_indices
         self.accept()
+
     def _on_skip(self):
         self.choice = "skip"
         self.accept()
+
     def _on_trash(self):
         self.choice = "trash_all"
         self.accept()
+
     def _on_auto(self):
         self.choice = "auto_all"
         self.accept()
+
     def _on_cancel(self):
         self.choice = "abort"
         self.reject()
+
+    def reject(self):
+        self.choice = "abort"
+        super().reject()
+
+    def closeEvent(self, event):
+        self.choice = "abort"
+        event.accept()
+        super().closeEvent(event)
 # =====================
 # HLAVNÍ OKNO
 # =====================
@@ -1393,11 +2027,6 @@ class MainWindow(QMainWindow):
         default_index: int = 0,
         style_buttons: Optional[Dict[str, str]] = None,
     ) -> Optional[str]:
-        """
-        QMessageBox na Windows typicky spouští systémový zvuk podle ikony.
-        Aby byl program konzistentně “WAV only”, vždy používáme NoIcon a pouštíme vlastní SFX.
-        Vrací text tlačítka, na které uživatel klikl (nebo None).
-        """
         if kind == "err":
             self.sfx.play_error()
         elif kind == "warn":
@@ -1405,47 +2034,50 @@ class MainWindow(QMainWindow):
         else:
             self.sfx.play_info()
 
-        msg = QMessageBox(self)
-        msg.setWindowTitle(title)
-        msg.setText(text)
-        msg.setStyleSheet(DIALOG_FRAME_QSS)
-        apply_dialog_sizing(msg)
-        # klíč: NoIcon => žádný Windows “ding”
-        msg.setIcon(QMessageBox.Icon.NoIcon)
+        dialog = KajoChoiceDialog(
+            self,
+            title=title,
+            text=text,
+            kind=kind,
+            buttons=buttons,
+            default_index=default_index,
+            style_buttons=style_buttons,
+        )
+        dialog.exec()
+        return dialog.selected_label()
 
-        created: List[QPushButton] = []
-        if buttons:
-            for caption, role in buttons:
-                b = msg.addButton(caption, role)
-                created.append(b)
-            if 0 <= default_index < len(created):
-                msg.setDefaultButton(created[default_index])
-        else:
-            msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+    def _exec_directory_dialog(self, title: str, accept_text: str) -> str:
+        dialog = QFileDialog(self)
+        dialog.setFileMode(QFileDialog.FileMode.Directory)
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        configure_file_dialog(dialog, title=title, accept_text=accept_text)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return ""
+        files = dialog.selectedFiles()
+        return files[0] if files else ""
 
-        # volitelné styly tlačítek (musí být PŘED exec, aby byly vidět)
-        if style_buttons:
-            # pokud jsme vytvořili vlastní tlačítka, nastylujeme je
-            if created:
-                for b in created:
-                    cap = b.text()
-                    if cap in style_buttons:
-                        b.setStyleSheet(style_buttons[cap])
-            else:
-                # default "OK" tlačítko
-                okb = msg.button(QMessageBox.StandardButton.Ok)
-                if okb is not None and "OK" in style_buttons:
-                    okb.setStyleSheet(style_buttons["OK"])
+    def _exec_save_dialog(self, title: str, start_path: str, file_filter: str, accept_text: str) -> str:
+        dialog = QFileDialog(self)
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        dialog.selectFile(start_path)
+        dialog.setNameFilter(file_filter)
+        configure_file_dialog(dialog, title=title, accept_text=accept_text)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return ""
+        files = dialog.selectedFiles()
+        return files[0] if files else ""
 
-        msg.exec()
-
-        clicked = msg.clickedButton()
-        if clicked is None:
-            return None
-        try:
-            return clicked.text()
-        except Exception:
-            return None
+    def _exec_open_dialog(self, title: str, start_dir: str, file_filter: str, accept_text: str) -> str:
+        dialog = QFileDialog(self)
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
+        dialog.setDirectory(start_dir)
+        dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+        dialog.setNameFilter(file_filter)
+        configure_file_dialog(dialog, title=title, accept_text=accept_text)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return ""
+        files = dialog.selectedFiles()
+        return files[0] if files else ""
 
     def _toggle_sfx(self):
         self.sfx.enabled = not self.sfx.enabled
@@ -1762,27 +2394,27 @@ class MainWindow(QMainWindow):
         """Vrátí 'save', 'discard' nebo 'cancel'."""
         if not self.session_dirty:
             return "discard"
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Kájo, máme neuloženo")
         self.sfx.pop()
-        msg.setIcon(QMessageBox.Icon.NoIcon)
-        msg.setText(
+        clicked = self._kajo_box(
+            "Kájo, máme neuloženo",
             "Máte rozpracované virtuální třídění, které není uložené.\n"
-            "Chcete aktuální stav uložit?"
+            "Chcete aktuální stav uložit?",
+            kind="warn",
+            buttons=[
+                ("Kájo, zapamatuj si to", QMessageBox.ButtonRole.AcceptRole),
+                ("Kájo, zahodit", QMessageBox.ButtonRole.DestructiveRole),
+                ("Kájo, stop", QMessageBox.ButtonRole.RejectRole),
+            ],
+            default_index=0,
+            style_buttons={
+                "Kájo, zapamatuj si to": BUTTON_GOLD_QSS,
+                "Kájo, zahodit": BUTTON_DANGER_QSS,
+                "Kájo, stop": BUTTON_SURFACE_QSS,
+            },
         )
-        msg.setStyleSheet(DIALOG_FRAME_QSS)
-        apply_dialog_sizing(msg, extra_h=140)
-        save_btn = msg.addButton("Kájo, zapamatuj si to", QMessageBox.ButtonRole.AcceptRole)
-        discard_btn = msg.addButton("Kájo, zahodit", QMessageBox.ButtonRole.DestructiveRole)
-        cancel_btn = msg.addButton("Kájo, stop", QMessageBox.ButtonRole.RejectRole)
-        save_btn.setStyleSheet(BUTTON_GOLD_QSS)
-        discard_btn.setStyleSheet(BUTTON_DANGER_QSS)
-        cancel_btn.setStyleSheet(BUTTON_PRIMARY_QSS)
-        msg.exec()
-        clicked = msg.clickedButton()
-        if clicked == save_btn:
+        if clicked == "Kájo, zapamatuj si to":
             return "save"
-        if clicked == discard_btn:
+        if clicked == "Kájo, zahodit":
             return "discard"
         return "cancel"
 
@@ -1950,21 +2582,21 @@ class MainWindow(QMainWindow):
         bucket = self.buckets.get(code)
         if not bucket:
             return
-        dlg = QInputDialog(self)
-        dlg.setWindowTitle("Kájo, jak se to bude jmenovat?")
-        dlg.setLabelText("Nový název hromádky:")
-        dlg.setTextEchoMode(QLineEdit.EchoMode.Normal)
-        dlg.setTextValue(bucket.alias)
-        dlg.setStyleSheet(DIALOG_FRAME_QSS)
-        apply_dialog_sizing(dlg, extra_h=140)
         try:
             self.sfx.pop()
         except Exception:
             pass
-        ok = dlg.exec() == QDialog.DialogCode.Accepted
-        if not ok:
+        dlg = KajoTextInputDialog(
+            self,
+            title="Kájo, jak se to bude jmenovat?",
+            label="Nový název hromádky:",
+            value=bucket.alias,
+            confirm_text="Uložit název",
+            cancel_text="Zrušit",
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        new_name = dlg.textValue().strip()
+        new_name = dlg.text_value()
         if not new_name:
             return
         bucket.alias = new_name
@@ -1972,8 +2604,11 @@ class MainWindow(QMainWindow):
         if w:
             w["group_box"].setTitle(new_name.upper())
             w["btn_assign"].setText(f"Kájo, hoď to do: {new_name}")
+            if isinstance(w["btn_select"], QPushButton):
+                w["btn_select"].setToolTip(f"Cílová složka pro hromádku {new_name}")
         if self.current_view == code:
             self.update_view_header()
+        self.mark_dirty()
 
     def assign_selected_to_bucket(self, code: str):
         if self.current_view != "MAIN":
@@ -2012,7 +2647,10 @@ class MainWindow(QMainWindow):
             return
         if code == "TRASH":
             return
-        folder = QFileDialog.getExistingDirectory(self, f"Vyberte cílovou složku pro {self.buckets[code].alias}")
+        folder = self._exec_directory_dialog(
+            title=f"Vyberte cílovou složku pro {self.buckets[code].alias}",
+            accept_text="Použít tuto složku",
+        )
         if not folder:
             return
         self.buckets[code].path = folder
@@ -2061,7 +2699,10 @@ class MainWindow(QMainWindow):
         self.last_ignore_system = ign
         return mkb, xkb, ign
     def on_kajo_stopa(self):
-        dir_ = QFileDialog.getExistingDirectory(self, "Vyberte adresář s fotkami")
+        dir_ = self._exec_directory_dialog(
+            title="Vyberte adresář s fotkami",
+            accept_text="Načíst tuto složku",
+        )
         if not dir_:
             return
         self.sfx.play(SFX_JUMP)
@@ -2085,35 +2726,20 @@ class MainWindow(QMainWindow):
         if not append:
             self.reset_state()
         scan_canceled = False
-        progress_scan = QProgressDialog(
-            "Prohledávám složky...\nProhledáno složek: 0\nNalezeno obrázků: 0",
-            "Zrušit",
-            0,
-            0,
-            self,
-        )
-        progress_scan.setWindowTitle("Skenování")
-        progress_scan.setWindowModality(Qt.WindowModality.ApplicationModal)
-        progress_scan.setMinimumDuration(0)
-        progress_scan.setAutoClose(False)
-        progress_scan.setAutoReset(False)
-        progress_scan.setStyleSheet(PROGRESS_QSS + DIALOG_FRAME_QSS)
-        apply_dialog_sizing(progress_scan, extra_h=160)
-        progress_scan.show()
-        QApplication.processEvents()
+        progress_scan = DagmarProgress("Prohledávám složky se zdrojovými fotografiemi…", self, 0)
+        progress_scan.set_detail_text("Prohledáno složek: 0\nNalezeno obrázků: 0")
         self.toast("Kájo skenuje svět…", "warn", 1800)
         def on_progress(found_count: int, dir_count: int) -> bool:
             nonlocal scan_canceled
-            progress_scan.setLabelText(
-                f"Prohledávám složky...\nProhledáno složek: {dir_count}\nNalezeno obrázků: {found_count}"
+            progress_scan.set_detail_text(
+                f"Prohledáno složek: {dir_count}\nNalezeno obrázků: {found_count}"
             )
-            QApplication.processEvents()
             if progress_scan.wasCanceled():
                 scan_canceled = True
                 return False
             return True
         all_paths = iter_image_paths(roots, ignore_system=ignore_system, on_progress=on_progress)
-        progress_scan.close()
+        progress_scan.complete()
         if scan_canceled:
             logger.info("Skenování preruseno uzivatelem.")
             return
@@ -2123,6 +2749,7 @@ class MainWindow(QMainWindow):
             self.toast("Kájo nic nenašel (0 obrázků).", "err", 2600)
             return
         progress_filter = DagmarProgress("Filtruji soubory podle velikosti…", self, len(all_paths))
+        progress_filter.set_detail_text("Vyřazuji příliš malé nebo příliš velké soubory.")
         min_bytes = min_kb * 1024 if min_kb > 0 else 0
         max_bytes = max_kb * 1024 if max_kb > 0 else 0
         filtered: List[str] = []
@@ -2132,21 +2759,29 @@ class MainWindow(QMainWindow):
                 logger.info("Filtrování přerušeno uživatelem.")
                 filter_canceled = True
                 break
+            kept_this_round = False
             try:
                 sz = os.path.getsize(p)
             except OSError:
-                progress_filter.update(i)
-                continue
-            if min_bytes and sz < min_bytes:
-                progress_filter.update(i)
-                continue
-            if max_bytes and sz > max_bytes:
-                progress_filter.update(i)
-                continue
-            filtered.append(p)
-            progress_filter.update(i)
-        progress_filter.close()
-        if filter_canceled:
+                sz = -1
+            if sz >= 0:
+                if min_bytes and sz < min_bytes:
+                    pass
+                elif max_bytes and sz > max_bytes:
+                    pass
+                else:
+                    filtered.append(p)
+                    kept_this_round = True
+            progress_filter.update(
+                i,
+                detail_text=(
+                    f"Posouzeno souborů: {i}\n"
+                    f"Zatím ponecháno: {len(filtered)}\n"
+                    f"Poslední soubor: {'ponechán' if kept_this_round else 'vyřazen nebo nepřístupný'}"
+                ),
+            )
+        progress_filter.complete()
+        if progress_filter.wasCanceled():
             return
         logger.info("Po filtru velikosti zůstává %d souborů.", len(filtered))
         if not filtered:
@@ -2154,6 +2789,7 @@ class MainWindow(QMainWindow):
             self.toast("Kájo vše vyfiltroval (0 prošlo).", "err", 2600)
             return
         progress = DagmarProgress("Načítám obrázky…", self, len(filtered))
+        progress.set_detail_text("Zakládám virtuální záznamy a připravuji náhledy.")
         added = 0
         start_id_before = self.next_id
         existing_paths = {rec.path for rec in self.images}
@@ -2183,9 +2819,14 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
             if progress is not None:
-                progress.update(i)
+                progress.update(
+                    i,
+                    detail_text=f"Přidáno nových záznamů: {added}\nAktuální soubor: {os.path.basename(path)}",
+                )
         if progress is not None:
-            progress.close()
+            progress.complete()
+            if progress.wasCanceled():
+                return
         logger.info(
             "Skenování dokončeno, přidáno %d nových záznamů (ID od %d do %d).",
             added,
@@ -2197,11 +2838,11 @@ class MainWindow(QMainWindow):
         self.update_view_header()
     # ---------------- SAVE / LOAD ----------------
     def _do_save(self) -> bool:
-        path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Uložit stav třídění",
-            os.path.join(BASE_DIR, "Kaja_session.json"),
-            "JSON (*.json)",
+        path = self._exec_save_dialog(
+            title="Uložit stav třídění",
+            start_path=os.path.join(BASE_DIR, "Kaja_session.json"),
+            file_filter="JSON (*.json)",
+            accept_text="Uložit session",
         )
         if not path:
             return False
@@ -2242,11 +2883,11 @@ class MainWindow(QMainWindow):
         if choice == "save":
             if not self._do_save():
                 return
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Načíst stav třídění",
-            BASE_DIR,
-            "JSON (*.json)",
+        path = self._exec_open_dialog(
+            title="Načíst stav třídění",
+            start_dir=BASE_DIR,
+            file_filter="JSON (*.json)",
+            accept_text="Načíst session",
         )
         if not path:
             return
@@ -2290,6 +2931,10 @@ class MainWindow(QMainWindow):
         used_ids: set[int] = set()
         progress = DagmarProgress("Obnovuji miniatury…", self, len(images_data))
         for i, rec_data in enumerate(images_data, start=1):
+            if progress.wasCanceled():
+                logger.info("Obnova session přerušena uživatelem po %d záznamech.", i - 1)
+                break
+            loaded_name = "(neplatný záznam)"
             try:
                 raw_id = rec_data.get("id")
                 if not isinstance(raw_id, int) or raw_id <= 0 or raw_id in used_ids:
@@ -2304,20 +2949,32 @@ class MainWindow(QMainWindow):
                     height=rec_data.get("height"),
                 )
             except Exception:
-                continue
-            self.images.append(rec)
-            self.image_by_id[rec.id] = rec
-            used_ids.add(rec.id)
-            self.next_id = max(self.next_id, rec.id + 1)
-            if rec.bucket != "MAIN":
-                b = self.buckets.get(rec.bucket)
-                if b:
-                    b.count += 1
-                    b.size_total += rec.size
+                rec = None
+            if rec is not None:
+                self.images.append(rec)
+                self.image_by_id[rec.id] = rec
+                used_ids.add(rec.id)
+                self.next_id = max(self.next_id, rec.id + 1)
+                loaded_name = os.path.basename(rec.path)
+                if rec.bucket != "MAIN":
+                    b = self.buckets.get(rec.bucket)
+                    if b:
+                        b.count += 1
+                        b.size_total += rec.size
             if progress is not None:
-                progress.update(i)
+                progress.update(
+                    i,
+                    detail_text=f"Zpracováno záznamů: {i}\nAktuální položka: {loaded_name}",
+                )
         if progress is not None:
-            progress.close()
+            progress.complete()
+            if progress.wasCanceled():
+                if self.current_view not in self.buckets and self.current_view != "MAIN":
+                    self.current_view = "MAIN"
+                self.rebuild_list()
+                self.update_view_header()
+                self.mark_dirty()
+                return
         for code in self.buckets:
             self._update_bucket_stats(code)
         # znovu postavit seznam podle aktuálního pohledu
@@ -2341,7 +2998,7 @@ class MainWindow(QMainWindow):
             default_index=1,
             style_buttons={
                 "Pokračovat": BUTTON_DANGER_QSS,
-                "Zrušit": BUTTON_PRIMARY_QSS,
+                "Zrušit": BUTTON_SURFACE_QSS,
             },
         )
         if clicked != "Pokračovat":
@@ -2363,26 +3020,31 @@ class MainWindow(QMainWindow):
             default_index=1,
             style_buttons={
                 "Ano, začít znovu": BUTTON_DANGER_QSS,
-                "Ne": BUTTON_PRIMARY_QSS,
+                "Ne": BUTTON_SURFACE_QSS,
             },
         )
         if clicked2 == "Ano, začít znovu":
             self.reset_state()
     def on_exit(self):
-        warn = QMessageBox(self)
-        warn.setWindowTitle("Kájo, pozor")
-        warn.setIcon(QMessageBox.Icon.NoIcon)
-        warn.setText("Opravdu chcete ukončit program? Neuložená data budou ztracena.")
-        warn.setStyleSheet(DIALOG_FRAME_QSS)
-        apply_dialog_sizing(warn, extra_h=140)
         try:
             self.sfx.pop()
         except Exception:
             pass
-        yes_btn = warn.addButton("Kájo, ukončit", QMessageBox.ButtonRole.AcceptRole)
-        no_btn = warn.addButton("Kájo, ne", QMessageBox.ButtonRole.RejectRole)
-        warn.exec()
-        if warn.clickedButton() != yes_btn:
+        clicked = self._kajo_box(
+            "Kájo, pozor",
+            "Opravdu chcete ukončit program? Neuložená data budou ztracena.",
+            kind="warn",
+            buttons=[
+                ("Kájo, ukončit", QMessageBox.ButtonRole.AcceptRole),
+                ("Kájo, ne", QMessageBox.ButtonRole.RejectRole),
+            ],
+            default_index=1,
+            style_buttons={
+                "Kájo, ukončit": BUTTON_DANGER_QSS,
+                "Kájo, ne": BUTTON_SURFACE_QSS,
+            },
+        )
+        if clicked != "Kájo, ukončit":
             return
         if self.session_dirty:
             choice = self.prompt_unsaved()
@@ -2465,19 +3127,23 @@ class MainWindow(QMainWindow):
             self.toast("Kájo potřebuje aspoň 2 fotky v hlavním světě.", "err", 2600)
             return
         progress = DagmarProgress("Počítám hash pro hledání duplicit…", self, len(main_records))
+        progress.set_detail_text("Porovnávám vizuální podobnost snímků v hlavním pohledu.")
         hash_map: Dict[int, List[ImageRecord]] = {}
         for i, rec in enumerate(main_records, start=1):
             if progress is not None and progress.wasCanceled():
                 logger.info("Hledání duplicit přerušeno uživatelem.")
-                progress.close()
+                progress.complete()
                 return
             h = perceptual_hash(rec.path)
             if h is not None:
                 hash_map.setdefault(h, []).append(rec)
             if progress is not None:
-                progress.update(i)
+                progress.update(
+                    i,
+                    detail_text=f"Zkontrolováno souborů: {i}\nAktuální soubor: {os.path.basename(rec.path)}",
+                )
         if progress is not None:
-            progress.close()
+            progress.complete()
         groups: List[List[ImageRecord]] = [lst for lst in hash_map.values() if len(lst) > 1]
         if not groups:
             self.toast("Kájo nenašel žádné dvojníky.", "ok", 2200)
@@ -2497,7 +3163,7 @@ class MainWindow(QMainWindow):
                 continue
             if choice == "trash_all":
                 for rec in group:
-                    self._set_record_bucket(rec, "TRASH")
+                    self._set_record_bucket(rec, "DUPLICITA")
                 self.mark_dirty()
             if choice == "keep_marked":
                 keep_indices = dlg.selected_indices
@@ -2506,7 +3172,7 @@ class MainWindow(QMainWindow):
                     if rec.id in keep_ids:
                         self._set_record_bucket(rec, "MAIN")
                     else:
-                        self._set_record_bucket(rec, "TRASH")
+                        self._set_record_bucket(rec, "DUPLICITA")
                 self.mark_dirty()
             if choice == "auto_all":
                 auto_mode = True
@@ -2521,7 +3187,7 @@ class MainWindow(QMainWindow):
             if rec is best:
                 self._set_record_bucket(rec, "MAIN")
             else:
-                self._set_record_bucket(rec, "TRASH")
+                self._set_record_bucket(rec, "DUPLICITA")
         self.mark_dirty()
     # ---------------- SPUSŤ KÁJU (fyzický přesun) ----------------
     def on_run_apply(self):
@@ -2556,7 +3222,7 @@ class MainWindow(QMainWindow):
             default_index=1,
             style_buttons={
                 "Kájo, proveď to": BUTTON_DANGER_QSS,
-                "Kájo, stop": BUTTON_PRIMARY_QSS,
+                "Kájo, stop": BUTTON_SURFACE_QSS,
             },
         )
         if clicked != "Kájo, proveď to":
@@ -2586,6 +3252,7 @@ class MainWindow(QMainWindow):
             self._kajo_box("Kájo, není co provést", "Není žádná operace k provedení.", kind="info")
             return
         progress = DagmarProgress("Provádím fyzické přesuny…", self, len(operations))
+        progress.set_detail_text("Postupně přesouvám soubory do cílových složek nebo do koše.")
         moved = 0
         trashed = 0
         failed = 0
@@ -2620,11 +3287,29 @@ class MainWindow(QMainWindow):
                 failed += 1
                 logger.error("Chyba při přesunu %s: %s", rec.path, e)
             if progress is not None:
-                progress.update(i)
+                progress.update(
+                    i,
+                    detail_text=f"Přesunuto: {moved}\nDo koše: {trashed}\nChyby: {failed}\nAktuální soubor: {os.path.basename(rec.path)}",
+                )
         if progress is not None:
-            progress.close()
+            progress.complete()
         if completed_ids:
             self._remove_records_by_ids(completed_ids)
+        if canceled:
+            msg_txt = (
+                f"Operace byla přerušena.\n"
+                f"Přesunuto před stornem: {moved} souborů\n"
+                f"Do koše před stornem: {trashed} souborů\n"
+                f"Chyby do přerušení: {failed}\n"
+                "Aplikace zůstává běžet a zachovává dokončenou část operace."
+            )
+            self._kajo_box("Kájo, operace byla přerušena", msg_txt, kind="warn")
+            logger.info("Fyzické provádění přerušeno: %s", msg_txt.replace("\n", " | "))
+            if completed_ids:
+                self.mark_dirty()
+            self.rebuild_list()
+            self.update_view_header()
+            return
         # po provedení – vyprázdnit vše, jako při startu
         msg_txt = (
             f"Přesunuto: {moved} souborů\n"

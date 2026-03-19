@@ -1,5 +1,8 @@
 # Repository Guidelines
 
+## Jazyk a dokumentace
+- Povinným jazykem je čeština. Všechny komentáře, placeholdery a poznámky ve zdrojových kódech i dokumentaci musí být výhradně česky; narazí-li Codex na jiný jazyk, přeloží jej do češtiny.
+
 ## Project Structure & Module Organization
 - `KajovoPhotoSelector.py` contains the entire PyQt6 application: UI, data models, thumbnail workers, and file operations.
 - Assets live in `resources/` (logo, icons, sounds, video).
