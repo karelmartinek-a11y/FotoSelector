@@ -6,9 +6,8 @@ import sys
 import json
 import time
 import shutil
+import hashlib
 import logging
-import warnings
-import platform
 import random
 import subprocess
 import tempfile
@@ -97,15 +96,19 @@ def _set_windows_appusermodel_id(app_id: str) -> None:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
     except Exception:
         pass
-from PIL import Image, ImageFile, UnidentifiedImageError
+from cloud_sync import (
+    CloudLocalSource,
+    detect_cloud_sources,
+    normalize_scan_sources,
+    provider_label,
+    source_for_path,
+)
 from kps_security import (
     normalize_session_roots,
     resolve_non_conflicting_path,
     sanitize_session_roots,
     sanitize_loaded_images,
 )
-
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 try:
     from send2trash import send2trash
 except ImportError:
@@ -223,9 +226,22 @@ def _qss_btn(bg: str, fg: str, border: str, hover_bg: str, pressed_bg: str) -> s
     }}
     """
 
-IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}  # TIF/TIFF záměrně vynecháno
+IMAGE_EXTS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".bmp",
+    ".gif",
+    ".heic",
+    ".heif",
+    ".avif",
+    ".tif",
+    ".tiff",
+}
 MAX_THUMB_PIXELS = 40_000_000
 MAX_HASH_PIXELS = 80_000_000
+FORENSIC_CHUNK_SIZE = 256 * 1024
 SYSTEM_PATH_KEYWORDS = [
     "\\windows\\",
     "\\program files\\",
@@ -885,30 +901,88 @@ def iter_image_paths(
         if stop_scan:
             break
     return paths
-def perceptual_hash(path: str, hash_size: int = 8) -> Optional[int]:
-    """Jednoduchy prumerny hash pomoci Pillow."""
+
+
+def read_image_dimensions(path: str) -> Tuple[Optional[int], Optional[int]]:
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(path) as img:
-                if img.width * img.height > MAX_HASH_PIXELS:
-                    return None
-                img = img.convert("L")
-                img = img.resize((hash_size, hash_size), Image.Resampling.LANCZOS)
-                if hasattr(img, "get_flattened_data"):
-                    pixels = list(img.get_flattened_data())
-                else:
-                    pixels = list(img.getdata())
-                avg = sum(pixels) / len(pixels)
-                bits = "".join("1" if p > avg else "0" for p in pixels)
-                return int(bits, 2)
-    except UnidentifiedImageError:
-        logger.warning("Soubor není rozpoznán jako obrázek pro hash: %s", path)
-    except Image.DecompressionBombWarning:
-        logger.warning("Obrázek je při hashování přeskočen (příliš velký): %s", path)
+        reader = QImageReader(path)
+        reader.setAutoTransform(True)
+        size = reader.size()
+        if size.isValid():
+            return int(size.width()), int(size.height())
+    except Exception:
+        pass
+    return None, None
+
+
+def _average_hash_from_qimage(image: QImage, hash_size: int) -> Optional[int]:
+    if image.isNull():
+        return None
+    scaled = image.scaled(
+        hash_size,
+        hash_size,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    ).convertToFormat(QImage.Format.Format_Grayscale8)
+    pixels: List[int] = []
+    for y in range(hash_size):
+        for x in range(hash_size):
+            pixels.append(scaled.pixelColor(x, y).value())
+    if not pixels:
+        return None
+    avg = sum(pixels) / len(pixels)
+    bits = "".join("1" if p > avg else "0" for p in pixels)
+    return int(bits, 2)
+
+
+def perceptual_hash(path: str, hash_size: int = 8) -> Optional[int]:
+    """Jednoduchy prumerny hash pomoci QImageReader."""
+    try:
+        reader = QImageReader(path)
+        reader.setAutoTransform(True)
+        size = reader.size()
+        if size.isValid():
+            pixels = int(size.width()) * int(size.height())
+            if pixels > MAX_HASH_PIXELS:
+                logger.warning("Obrázek je při hashování přeskočen (příliš velký): %s", path)
+                return None
+        reader.setScaledSize(QSize(hash_size, hash_size))
+        image = reader.read()
+        if image.isNull():
+            logger.warning("Soubor není rozpoznán jako obrázek pro hash: %s", path)
+            return None
+        return _average_hash_from_qimage(image, hash_size)
     except Exception as e:
         logger.warning("Chyba při výpočtu hashe pro %s: %s", path, e)
     return None
+
+
+def hamming_distance(left: int, right: int) -> int:
+    return (left ^ right).bit_count()
+
+
+def sampled_file_signature(path: str, size: int) -> Optional[str]:
+    if size <= 0:
+        return None
+    try:
+        with open(path, "rb") as f:
+            hasher = hashlib.sha1()
+            if size <= FORENSIC_CHUNK_SIZE * 3:
+                while True:
+                    chunk = f.read(1024 * 128)
+                    if not chunk:
+                        break
+                    hasher.update(chunk)
+                return f"full:{size}:{hasher.hexdigest()}"
+
+            offsets = [0, max(0, size // 2 - FORENSIC_CHUNK_SIZE // 2), max(0, size - FORENSIC_CHUNK_SIZE)]
+            for offset in offsets:
+                f.seek(offset)
+                hasher.update(f.read(FORENSIC_CHUNK_SIZE))
+            return f"sample:{size}:{hasher.hexdigest()}"
+    except Exception as e:
+        logger.warning("Chyba při forenznim cteni %s: %s", path, e)
+        return None
 # =====================
 # DATOVÉ STRUKTURY
 # =====================
@@ -920,6 +994,12 @@ class ImageRecord:
     bucket: str = "MAIN"  # MAIN, T1..T4, TRASH, DUPLICITA
     width: Optional[int] = None
     height: Optional[int] = None
+    source_provider: str = "local"
+    source_label: str = "Lokalni slozka"
+    source_root: str = ""
+    read_only: bool = False
+
+
 @dataclass
 class Bucket:
     code: str
@@ -1405,6 +1485,43 @@ class ScanOptionsDialog(QDialog):
     def closeEvent(self, event):
         event.accept()
         super().closeEvent(event)
+
+class CloudSourcesDialog(QDialog):
+    def __init__(self, parent: QWidget, title: str, sources: List[CloudLocalSource]):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setStyleSheet(DIALOG_FRAME_QSS)
+        apply_dialog_sizing(self, extra_h=180)
+        self._checkboxes: List[Tuple[CloudLocalSource, QCheckBox]] = []
+
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            "Vyberte cloudove slozky, ktere se maji pridat do hlavniho sveta.\n"
+            "Program pracuje nad synchronizovanymi cloudovymi slozkami a stahuje obsah az podle potreby."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color:{SUBTEXT_COLOR};")
+        layout.addWidget(intro)
+
+        for source in sources:
+            suffix = " [jen pro cteni]" if source.read_only else ""
+            chk = QCheckBox(f"{source.label}{suffix}\n{source.root}")
+            chk.setChecked(True)
+            chk.setStyleSheet("color:white;background-color:#151821;padding:6px;")
+            layout.addWidget(chk)
+            self._checkboxes.append((source, chk))
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def selected_sources(self) -> List[CloudLocalSource]:
+        return [source for source, chk in self._checkboxes if chk.isChecked()]
 # =====================
 # DIALOG PRO DUPLICITY
 # =====================
@@ -1942,6 +2059,7 @@ class MainWindow(QMainWindow):
         self.next_id: int = 1
         self.current_view: str = "MAIN"  # MAIN nebo kód bucketu
         self.session_roots: List[str] = []
+        self.scan_sources: List[CloudLocalSource] = []
         self.session_dirty: bool = False
         self.last_min_kb: int = 0
         self.last_max_kb: int = 0
@@ -2150,6 +2268,7 @@ class MainWindow(QMainWindow):
 
         # Akční tlačítka (funkce stejné, jen “Kája” naming)
         self.btn_kajo_stopa = AnimatedPushButton("Kájo, ukaž mi fotky", sfx=lambda: self.sfx.play(SFX_JUMP))
+        self.btn_cloud = AnimatedPushButton("Kájo, pridej cloud", sfx=lambda: self.sfx.play(SFX_JUMP))
         self.btn_dupes = AnimatedPushButton("Kájo, najdi dvojníky", sfx=lambda: self.sfx.play(SFX_COIN))
         self.btn_run = AnimatedPushButton("Kájo, proveď to", sfx=lambda: self.sfx.play(SFX_POP))
         self.btn_save = AnimatedPushButton("Kájo, zapamatuj si to", sfx=lambda: self.sfx.play(SFX_COIN))
@@ -2158,6 +2277,7 @@ class MainWindow(QMainWindow):
         self.btn_exit = AnimatedPushButton("Kájo, končíme", sfx=lambda: self.sfx.play(SFX_POP))
 
         self.btn_kajo_stopa.setStyleSheet(BUTTON_PRIMARY_QSS)
+        self.btn_cloud.setStyleSheet(BUTTON_SURFACE_QSS)
         self.btn_dupes.setStyleSheet(BUTTON_GOLD_QSS)
         self.btn_run.setStyleSheet(BUTTON_DANGER_QSS)
         self.btn_save.setStyleSheet(BUTTON_SURFACE_QSS)
@@ -2167,6 +2287,7 @@ class MainWindow(QMainWindow):
 
         for b in [
             self.btn_kajo_stopa,
+            self.btn_cloud,
             self.btn_dupes,
             self.btn_run,
             self.btn_save,
@@ -2311,6 +2432,7 @@ class MainWindow(QMainWindow):
             btn_show.clicked.connect(lambda _, c=code: self.show_bucket_view(c))
         # Signály horního menu
         self.btn_kajo_stopa.clicked.connect(self.on_kajo_stopa)
+        self.btn_cloud.clicked.connect(self.on_add_cloud_source)
         self.btn_dupes.clicked.connect(self.on_find_duplicates)
         self.btn_run.clicked.connect(self.on_run_apply)
         self.btn_save.clicked.connect(self.on_save)
@@ -2329,7 +2451,6 @@ class MainWindow(QMainWindow):
     def clear_dirty(self):
         self.session_dirty = False
         self.update_view_stats()
-
     def _reset_bucket_metadata(self):
         for code, bucket in self.buckets.items():
             bucket.alias = DEFAULT_BUCKET_ALIASES[code]
@@ -2377,6 +2498,23 @@ class MainWindow(QMainWindow):
             return bucket_code
         return "MAIN"
 
+    def _register_scan_source(self, source: CloudLocalSource):
+        existing = {os.path.normcase(src.root) for src in self.scan_sources}
+        key = os.path.normcase(os.path.abspath(source.root))
+        if key not in existing:
+            self.scan_sources.append(source)
+        if source.root not in self.session_roots:
+            self.session_roots.append(source.root)
+    def _source_for_path(self, path: str) -> Optional[CloudLocalSource]:
+        return source_for_path(path, self.scan_sources)
+    def _make_local_source(self, root: str) -> CloudLocalSource:
+        return CloudLocalSource(
+            provider="local",
+            label="Lokalni slozka",
+            root=os.path.abspath(root),
+            category="documents",
+            read_only=False,
+        )
     def reset_state(self):
         logger.info("Reset stavu aplikace.")
         self.images.clear()
@@ -2388,6 +2526,7 @@ class MainWindow(QMainWindow):
         self.current_view = "MAIN"
         self.session_roots.clear()
         self._reset_bucket_metadata()
+        self.scan_sources.clear()
         self.clear_dirty()
         self.update_view_header()
     def prompt_unsaved(self) -> str:
@@ -2494,12 +2633,20 @@ class MainWindow(QMainWindow):
             d_disp = "…" + d[-23:]
         else:
             d_disp = d
-        return f"{base_disp}\n{d_disp}"
+        source_text = provider_label(rec.source_provider)
+        return f"{base_disp}\n{source_text}: {d_disp}"
     def _add_record_to_list(self, rec: ImageRecord):
         text = self._display_label_for_record(rec)
         item = QListWidgetItem(text)
         item.setData(Qt.ItemDataRole.UserRole, rec.id)
-        item.setToolTip(f"{rec.path}\n{human_size(rec.size)}")
+        tooltip = [
+            rec.path,
+            f"Zdroj: {rec.source_label}",
+            f"Velikost: {human_size(rec.size)}",
+        ]
+        if rec.read_only:
+            tooltip.append("Rezim: jen pro cteni")
+        item.setToolTip("\n".join(tooltip))
         pm = self.thumb_cache.get(rec.id)
         if pm is None:
             # placeholder
@@ -2710,10 +2857,51 @@ class MainWindow(QMainWindow):
         if not opts:
             return
         mkb, xkb, ign = opts
-        if dir_ not in self.session_roots:
-            self.session_roots.append(dir_)
-            self.session_roots = normalize_session_roots(self.session_roots)
+        self._register_scan_source(self._make_local_source(dir_))
         self._scan_directories([dir_], append=True, min_kb=mkb, max_kb=xkb, ignore_system=ign)
+    def on_add_cloud_source(self):
+        choices = ["iCloud", "Google Drive", "OneDrive", "Vsechny cloudy"]
+        provider_label_choice, ok = QInputDialog.getItem(
+            self,
+            "Cloudove zdroje",
+            "Ktery cloud chcete pridat?",
+            choices,
+            0,
+            False,
+        )
+        if not ok or not provider_label_choice:
+            return
+        provider_map = {
+            "iCloud": "icloud",
+            "Google Drive": "google-drive",
+            "OneDrive": "onedrive",
+            "Vsechny cloudy": None,
+        }
+        provider_code = provider_map.get(provider_label_choice)
+        detected = detect_cloud_sources(provider=provider_code)
+        if not detected:
+            self._kajo_box(
+                "Kájo, cloud neni po ruce",
+                "Nenalezl jsem zadne pripojene nebo synchronizovane cloudove slozky pro zvolenou volbu.",
+                kind="warn",
+            )
+            return
+        dlg = CloudSourcesDialog(self, f"Pridat {provider_label_choice}", detected)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dlg.selected_sources()
+        if not selected:
+            return
+        opts = self._ask_scan_options()
+        if not opts:
+            return
+        mkb, xkb, ign = opts
+        roots: List[str] = []
+        for source in selected:
+            self._register_scan_source(source)
+            roots.append(source.root)
+        self.toast("Kájo pripojuje cloudove slozky…", "warn", 2000)
+        self._scan_directories(roots, append=True, min_kb=mkb, max_kb=xkb, ignore_system=ign)
     def _scan_directories(
         self,
         roots: List[str],
@@ -2805,7 +2993,20 @@ class MainWindow(QMainWindow):
                 size = os.path.getsize(path)
             except OSError:
                 size = 0
-            rec = ImageRecord(id=self.next_id, path=path, size=size, bucket="MAIN")
+            width, height = read_image_dimensions(path)
+            source = self._source_for_path(path)
+            rec = ImageRecord(
+                id=self.next_id,
+                path=path,
+                size=size,
+                bucket="MAIN",
+                width=width,
+                height=height,
+                source_provider=source.provider if source else "local",
+                source_label=source.label if source else "Lokalni slozka",
+                source_root=source.root if source else "",
+                read_only=source.read_only if source else False,
+            )
             self.next_id += 1
             self.images.append(rec)
             self.image_by_id[rec.id] = rec
@@ -2849,6 +3050,7 @@ class MainWindow(QMainWindow):
         data = {
             "version": 1,
             "roots": self.session_roots,
+            "scan_sources": [source.to_dict() for source in self.scan_sources],
             "current_view": self.current_view,
             "last_min_kb": self.last_min_kb,
             "last_max_kb": self.last_max_kb,
@@ -2904,7 +3106,17 @@ class MainWindow(QMainWindow):
             logger.info("Načtení session zrušeno: zdrojové složky nebyly potvrzeny.")
             return
         self.reset_state()
-        self.session_roots = session_roots
+        loaded_sources = normalize_scan_sources(data.get("scan_sources", []))
+        if loaded_sources:
+            allowed_roots = {os.path.normcase(root) for root in session_roots}
+            self.scan_sources = [src for src in loaded_sources if os.path.normcase(src.root) in allowed_roots]
+            self.session_roots = normalize_session_roots([source.root for source in self.scan_sources])
+            if not self.scan_sources:
+                self.session_roots = session_roots
+                self.scan_sources = [self._make_local_source(root) for root in self.session_roots]
+        else:
+            self.session_roots = session_roots
+            self.scan_sources = [self._make_local_source(root) for root in self.session_roots]
         self.current_view = data.get("current_view", "MAIN")
         self.last_min_kb = data.get("last_min_kb", 0)
         self.last_max_kb = data.get("last_max_kb", 0)
@@ -2947,6 +3159,10 @@ class MainWindow(QMainWindow):
                     bucket=bucket_code,
                     width=rec_data.get("width"),
                     height=rec_data.get("height"),
+                    source_provider=rec_data.get("source_provider", "local"),
+                    source_label=rec_data.get("source_label", "Lokalni slozka"),
+                    source_root=rec_data.get("source_root", ""),
+                    read_only=bool(rec_data.get("read_only", False)),
                 )
             except Exception:
                 rec = None
@@ -3120,23 +3336,22 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(outro_ms + 200, lambda: QApplication.instance().quit())
     # ---------------- DUPLICITY ----------------
     def on_find_duplicates(self):
-        # duplicity jen v HLAVNÍ složce
         main_records = [rec for rec in self.images if rec.bucket == "MAIN"]
         if len(main_records) < 2:
             self.sfx.play(SFX_ERROR)
             self.toast("Kájo potřebuje aspoň 2 fotky v hlavním světě.", "err", 2600)
             return
-        progress = DagmarProgress("Počítám hash pro hledání duplicit…", self, len(main_records))
-        progress.set_detail_text("Porovnávám vizuální podobnost snímků v hlavním pohledu.")
-        hash_map: Dict[int, List[ImageRecord]] = {}
+        progress = DagmarProgress("Delam forenzni kontrolu souboru…", self, len(main_records))
+        progress.set_detail_text("Porovnavam otisky souboru bez hromadneho kopirovani na lokalni disk.")
+        exact_map: Dict[str, List[ImageRecord]] = {}
         for i, rec in enumerate(main_records, start=1):
             if progress is not None and progress.wasCanceled():
                 logger.info("Hledání duplicit přerušeno uživatelem.")
                 progress.complete()
                 return
-            h = perceptual_hash(rec.path)
-            if h is not None:
-                hash_map.setdefault(h, []).append(rec)
+            signature = sampled_file_signature(rec.path, rec.size)
+            if signature is not None:
+                exact_map.setdefault(signature, []).append(rec)
             if progress is not None:
                 progress.update(
                     i,
@@ -3144,7 +3359,51 @@ class MainWindow(QMainWindow):
                 )
         if progress is not None:
             progress.complete()
-        groups: List[List[ImageRecord]] = [lst for lst in hash_map.values() if len(lst) > 1]
+        groups: List[List[ImageRecord]] = [lst for lst in exact_map.values() if len(lst) > 1]
+        already_grouped_ids = {rec.id for group in groups for rec in group}
+        remaining = [rec for rec in main_records if rec.id not in already_grouped_ids]
+
+        if len(remaining) >= 2:
+            progress = DagmarProgress("Porovnavam vizualni podobnost fotek…", self, len(remaining))
+            progress.set_detail_text("Druha faze porovnava nahledove hashy a rozmery fotek.")
+            phashes: List[Tuple[ImageRecord, int]] = []
+            for i, rec in enumerate(remaining, start=1):
+                if progress is not None and progress.wasCanceled():
+                    logger.info("Vizuální porovnání duplicit přerušeno uživatelem.")
+                    progress.complete()
+                    return
+                h = perceptual_hash(rec.path)
+                if h is not None:
+                    phashes.append((rec, h))
+                if progress is not None:
+                    progress.update(
+                        i,
+                        detail_text=f"Zkontrolováno fotek: {i}\nAktuální soubor: {os.path.basename(rec.path)}",
+                    )
+            if progress is not None:
+                progress.complete()
+
+            used_ids = set()
+            for idx, (anchor, anchor_hash) in enumerate(phashes):
+                if anchor.id in used_ids:
+                    continue
+                group = [anchor]
+                for other, other_hash in phashes[idx + 1:]:
+                    if other.id in used_ids:
+                        continue
+                    max_size = max(anchor.size, other.size, 1)
+                    size_delta = abs(anchor.size - other.size) / max_size
+                    same_geometry = (
+                        anchor.width is not None
+                        and anchor.height is not None
+                        and anchor.width == other.width
+                        and anchor.height == other.height
+                    )
+                    if hamming_distance(anchor_hash, other_hash) <= 6 and (size_delta <= 0.15 or same_geometry):
+                        group.append(other)
+                if len(group) > 1:
+                    groups.append(group)
+                    used_ids.update(rec.id for rec in group)
         if not groups:
             self.toast("Kájo nenašel žádné dvojníky.", "ok", 2200)
             return
@@ -3230,8 +3489,13 @@ class MainWindow(QMainWindow):
         # sestavit operace
         operations: List[Tuple[ImageRecord, str, str]] = []  # (rec, op_type, target_path_or_empty)
         missing_sources = 0
+        read_only_skipped = 0
         for rec in self.images:
             if rec.bucket == "MAIN":
+                continue
+            if rec.read_only:
+                read_only_skipped += 1
+                logger.warning("Zdroj je jen pro cteni, preskakuji: %s", rec.path)
                 continue
             if not os.path.exists(rec.path):
                 missing_sources += 1
@@ -3248,8 +3512,15 @@ class MainWindow(QMainWindow):
                 os.makedirs(target_dir, exist_ok=True)
                 dst = os.path.join(target_dir, os.path.basename(rec.path))
                 operations.append((rec, "MOVE", dst))
-        if not operations and missing_sources == 0:
+        if not operations and missing_sources == 0 and read_only_skipped == 0:
             self._kajo_box("Kájo, není co provést", "Není žádná operace k provedení.", kind="info")
+            return
+        if not operations and read_only_skipped > 0 and missing_sources == 0:
+            self._kajo_box(
+                "Kájo, jen pro cteni",
+                "Vybrane soubory patri do zdroju pouze pro cteni, takze je z aplikace zamerne nepresouvam.",
+                kind="warn",
+            )
             return
         progress = DagmarProgress("Provádím fyzické přesuny…", self, len(operations))
         progress.set_detail_text("Postupně přesouvám soubory do cílových složek nebo do koše.")
@@ -3316,7 +3587,7 @@ class MainWindow(QMainWindow):
             f"Do koše: {trashed} souborů\n"
             f"Chybné operace: {failed}\n"
             f"Chybějící zdroje: {missing_sources}\n"
-            f"Zrušeno uživatelem: {'ano' if canceled else 'ne'}"
+            f"Jen pro čtení (přeskočeno): {read_only_skipped}"
         )
         self._kajo_box("Kájo, hotovo", msg_txt, kind="info")
         logger.info("Kájo, hotovo: %s", msg_txt.replace("\n", " | "))

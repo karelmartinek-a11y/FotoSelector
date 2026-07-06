@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 
+from cloud_sync import normalize_scan_sources, source_for_path
 from kps_security import (
     is_path_within_roots,
     normalize_session_roots,
@@ -65,6 +66,36 @@ class SecurityRegressionTests(unittest.TestCase):
 
             escaped = os.path.join(link, "secret.jpg")
             self.assertFalse(is_path_within_roots(escaped, [root]))
+
+    def test_normalize_scan_sources_deduplicates_by_root(self):
+        with tempfile.TemporaryDirectory() as root:
+            rel = os.path.relpath(root)
+            sources = normalize_scan_sources(
+                [
+                    {"provider": "icloud", "label": "A", "root": root, "category": "documents"},
+                    {"provider": "icloud", "label": "B", "root": rel, "category": "photos"},
+                ]
+            )
+            self.assertEqual(len(sources), 1)
+            self.assertEqual(sources[0].provider, "icloud")
+
+    def test_source_for_path_prefers_deepest_matching_root(self):
+        with tempfile.TemporaryDirectory() as root:
+            nested = os.path.join(root, "nested")
+            os.makedirs(nested, exist_ok=True)
+            file_path = os.path.join(nested, "photo.jpg")
+            with open(file_path, "wb") as f:
+                f.write(b"ok")
+
+            sources = normalize_scan_sources(
+                [
+                    {"provider": "local", "label": "Root", "root": root, "category": "documents"},
+                    {"provider": "icloud", "label": "Nested", "root": nested, "category": "photos"},
+                ]
+            )
+            match = source_for_path(file_path, sources)
+            self.assertIsNotNone(match)
+            self.assertEqual(match.label, "Nested")
 
 
 if __name__ == "__main__":
