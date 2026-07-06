@@ -1579,13 +1579,88 @@ class CloudSourcesDialog(QDialog):
         return [source for source, chk in self._checkboxes if chk.isChecked()]
 
 
+class CloudProviderCard(QFrame):
+    clicked = pyqtSignal(str)
+
+    def __init__(self, provider_type: str, title: str, badge: str, body: str, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.provider_type = provider_type
+        self._selected = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumHeight(104)
+        self.setProperty("dialogCard", "true")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(6)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(8)
+
+        self.lbl_title = QLabel(title)
+        self.lbl_title.setStyleSheet(f"color:{TEXT_COLOR}; font-size: 15px; font-weight: 900;")
+        top_row.addWidget(self.lbl_title, stretch=1)
+
+        self.lbl_badge = QLabel(badge)
+        self.lbl_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_badge.setStyleSheet(
+            f"""
+            color: #1A1A1A;
+            background-color: {ACCENT_COLOR};
+            border-radius: 10px;
+            padding: 4px 10px;
+            font-size: 11px;
+            font-weight: 900;
+            """
+        )
+        top_row.addWidget(self.lbl_badge, alignment=Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(top_row)
+
+        self.lbl_body = QLabel(body)
+        self.lbl_body.setWordWrap(True)
+        self.lbl_body.setStyleSheet(f"color:{SUBTEXT_COLOR}; font-size: 11px; font-weight: 700;")
+        layout.addWidget(self.lbl_body)
+        layout.addStretch(1)
+
+        self._apply_style()
+
+    def _apply_style(self):
+        border = ACCENT_COLOR if self._selected else "#2A3B72"
+        bg = "rgba(255, 213, 79, 0.10)" if self._selected else "#111A36"
+        shadow = "#FFE082" if self._selected else "#101A33"
+        self.setStyleSheet(
+            f"""
+            QFrame {{
+                background-color: {bg};
+                border: 2px solid {border};
+                border-radius: {RADIUS}px;
+            }}
+            """
+        )
+        effect = QGraphicsDropShadowEffect(self)
+        effect.setBlurRadius(22 if self._selected else 14)
+        effect.setOffset(0, 6 if self._selected else 4)
+        effect.setColor(QColor(shadow))
+        self.setGraphicsEffect(effect)
+
+    def set_selected(self, selected: bool):
+        self._selected = selected
+        self._apply_style()
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.provider_type)
+        super().mousePressEvent(event)
+
+
 class CloudAccountsDialog(QDialog):
     def __init__(self, parent: QWidget, cloud_manager: CloudServiceManager):
         super().__init__(parent)
         self.cloud_manager = cloud_manager
         self._selected_sources: List[CloudSource] = []
         self._sources_by_key: Dict[str, CloudSource] = {}
-        self._provider_cards: Dict[str, QPushButton] = {}
+        self._provider_cards: Dict[str, CloudProviderCard] = {}
         self.setWindowTitle("Kájo, prohledej cloudy")
         self.setModal(True)
         apply_dialog_theme(self, extra_h=320)
@@ -1606,6 +1681,11 @@ class CloudAccountsDialog(QDialog):
         connector_layout.setContentsMargins(18, 18, 18, 18)
         connector_layout.setSpacing(12)
 
+        cards_intro = QLabel("Vyberte typ připojení. Zvýrazněná karta určuje, jaký konektor Kája právě připraví.")
+        cards_intro.setWordWrap(True)
+        cards_intro.setStyleSheet(DIALOG_STATUS_QSS)
+        connector_layout.addWidget(cards_intro)
+
         self.provider_cards_layout = QGridLayout()
         self.provider_cards_layout.setContentsMargins(0, 0, 0, 0)
         self.provider_cards_layout.setHorizontalSpacing(10)
@@ -1613,10 +1693,14 @@ class CloudAccountsDialog(QDialog):
         connector_layout.addLayout(self.provider_cards_layout)
 
         toolbar = QHBoxLayout()
+        toolbar.setSpacing(10)
         self.cmb_provider = QComboBox()
+        self.cmb_provider.setMinimumHeight(42)
         for provider in self.cloud_manager.available_providers():
             self.cmb_provider.addItem(provider.display_name(), provider.provider_type)
-        toolbar.addWidget(QLabel("Konektor:"))
+        lbl_connector = QLabel("Jemny vyber:")
+        lbl_connector.setStyleSheet(DIALOG_STATUS_QSS)
+        toolbar.addWidget(lbl_connector)
         toolbar.addWidget(self.cmb_provider, stretch=1)
 
         self.btn_add_account = QPushButton("Pripojit konektor")
@@ -1635,7 +1719,16 @@ class CloudAccountsDialog(QDialog):
 
         self.lbl_provider_hint = QLabel("")
         self.lbl_provider_hint.setWordWrap(True)
-        self.lbl_provider_hint.setStyleSheet(DIALOG_STATUS_QSS)
+        self.lbl_provider_hint.setStyleSheet(
+            f"""
+            color:{SUBTEXT_COLOR};
+            background-color:#0D1530;
+            border:1px solid #25305A;
+            border-radius:{RADIUS}px;
+            padding:10px 12px;
+            font-weight:700;
+            """
+        )
         connector_layout.addWidget(self.lbl_provider_hint)
         layout.addWidget(connector_card)
 
@@ -1670,7 +1763,10 @@ class CloudAccountsDialog(QDialog):
 
         btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
         btns.rejected.connect(self.reject)
-        style_dialog_button_box(btns, reject_text="Zavrit", reject_kind="surface")
+        close_btn = btns.button(QDialogButtonBox.StandardButton.Close)
+        if close_btn is not None:
+            close_btn.setText("Zavrit")
+            style_dialog_button(close_btn, "surface")
         layout.addWidget(btns)
 
         self.btn_add_account.clicked.connect(self._on_add_account)
@@ -1719,29 +1815,6 @@ class CloudAccountsDialog(QDialog):
         }
         return mapping.get(provider_type, ("Konektor", "Podporovany rezim", "Vyberte konektor a pokracujte."))
 
-    def _provider_card_stylesheet(self, selected: bool) -> str:
-        border = ACCENT_COLOR if selected else "#25305A"
-        bg = "rgba(255, 213, 79, 0.12)" if selected else "#0E1630"
-        glow = "rgba(255, 213, 79, 0.18)" if selected else "rgba(16, 26, 51, 0.0)"
-        return f"""
-        QPushButton {{
-            background-color: {bg};
-            color: {TEXT_COLOR};
-            border: 2px solid {border};
-            border-radius: {RADIUS}px;
-            padding: 14px;
-            text-align: left;
-            font-weight: 700;
-        }}
-        QPushButton:hover {{
-            background-color: rgba(255, 213, 79, 0.10);
-            border: 2px solid {ACCENT_COLOR};
-        }}
-        QPushButton:pressed {{
-            background-color: rgba(255, 213, 79, 0.18);
-        }}
-        """
-
     def _build_provider_cards(self):
         while self.provider_cards_layout.count():
             item = self.provider_cards_layout.takeAt(0)
@@ -1754,16 +1827,12 @@ class CloudAccountsDialog(QDialog):
         for index, provider in enumerate(providers):
             provider_type = provider.provider_type
             title, badge, body = self._provider_card_payload(provider_type)
-            btn = QPushButton(f"{title}\n[{badge}]\n{body}")
-            btn.setCheckable(True)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            btn.setMinimumHeight(108)
-            btn.setStyleSheet(self._provider_card_stylesheet(False))
-            btn.clicked.connect(lambda _, pt=provider_type: self._select_provider_card(pt))
+            card = CloudProviderCard(provider_type, title, badge, body)
+            card.clicked.connect(self._select_provider_card)
             row = index // 3
             col = index % 3
-            self.provider_cards_layout.addWidget(btn, row, col)
-            self._provider_cards[provider_type] = btn
+            self.provider_cards_layout.addWidget(card, row, col)
+            self._provider_cards[provider_type] = card
         self._sync_provider_cards()
 
     def _select_provider_card(self, provider_type: str):
@@ -1776,10 +1845,7 @@ class CloudAccountsDialog(QDialog):
         selected_type = str(self.cmb_provider.currentData() or "")
         for provider_type, button in self._provider_cards.items():
             is_selected = provider_type == selected_type
-            button.blockSignals(True)
-            button.setChecked(is_selected)
-            button.setStyleSheet(self._provider_card_stylesheet(is_selected))
-            button.blockSignals(False)
+            button.set_selected(is_selected)
 
     def _provider_hint_text(self, provider_type: str) -> str:
         mapping = {
