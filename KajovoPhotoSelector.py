@@ -1664,6 +1664,8 @@ class CloudAccountsDialog(QDialog):
         self.setWindowTitle("Kájo, prohledej cloudy")
         self.setModal(True)
         apply_dialog_theme(self, extra_h=320)
+        self.setMinimumSize(1160, 860)
+        self.resize(1240, 920)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(22, 22, 22, 22)
@@ -1686,10 +1688,9 @@ class CloudAccountsDialog(QDialog):
         cards_intro.setStyleSheet(DIALOG_STATUS_QSS)
         connector_layout.addWidget(cards_intro)
 
-        self.provider_cards_layout = QGridLayout()
+        self.provider_cards_layout = QVBoxLayout()
         self.provider_cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.provider_cards_layout.setHorizontalSpacing(10)
-        self.provider_cards_layout.setVerticalSpacing(10)
+        self.provider_cards_layout.setSpacing(10)
         connector_layout.addLayout(self.provider_cards_layout)
 
         toolbar = QHBoxLayout()
@@ -1818,20 +1819,32 @@ class CloudAccountsDialog(QDialog):
     def _build_provider_cards(self):
         while self.provider_cards_layout.count():
             item = self.provider_cards_layout.takeAt(0)
+            if item.layout() is not None:
+                inner = item.layout()
+                while inner.count():
+                    inner_item = inner.takeAt(0)
+                    inner_widget = inner_item.widget()
+                    if inner_widget is not None:
+                        inner_widget.deleteLater()
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
         self._provider_cards.clear()
 
         providers = self.cloud_manager.available_providers()
+        current_row = None
         for index, provider in enumerate(providers):
+            if index % 3 == 0:
+                current_row = QHBoxLayout()
+                current_row.setContentsMargins(0, 0, 0, 0)
+                current_row.setSpacing(10)
+                self.provider_cards_layout.addLayout(current_row)
             provider_type = provider.provider_type
             title, badge, body = self._provider_card_payload(provider_type)
             card = CloudProviderCard(provider_type, title, badge, body)
             card.clicked.connect(self._select_provider_card)
-            row = index // 3
-            col = index % 3
-            self.provider_cards_layout.addWidget(card, row, col)
+            if current_row is not None:
+                current_row.addWidget(card, stretch=1)
             self._provider_cards[provider_type] = card
         self._sync_provider_cards()
 
