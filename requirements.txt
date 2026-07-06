@@ -1,3 +1,10 @@
 PyQt6
 Pillow
 send2trash
+requests
+keyring
+google-api-python-client
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+msal

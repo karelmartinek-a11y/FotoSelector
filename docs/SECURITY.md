@@ -1,32 +1,35 @@
-# Security
+# Bezpečnost
 
 ## Co chráníme
 - originální fotografie uživatele,
-- cílové složky bucketů,
-- session JSON s lokálními cestami,
-- správnost finálního přesunu nebo smazání.
+- OAuth tokeny a identitu cloudových účtů,
+- lokální cache cloudových položek,
+- session JSON a bucket cíle,
+- správnost finálního přesunu nebo exportu.
 
 ## Nedůvěryhodné vstupy
-- obsah zvolených adresářů,
-- načítaný `session.json`,
-- lokální filesystem včetně symlinků, junctionů a kolizních cílových souborů.
+- obsah lokálních adresářů,
+- metadata a obsah přicházející z cloudových API,
+- načítaný `Kaja_session.json`,
+- placeholder soubory synchronizačních klientů.
 
-## Aktivní ochrany v kódu
-- Session se deserializuje pouze přes `json`.
-- Session roots se normalizují přes `realpath()`, musí existovat a nesmí to být root filesystemu.
-- Obrázky ze session se obnovují jen tehdy, pokud jejich cesta opravdu leží uvnitř potvrzených roots.
-- Před obnovou session uživatel potvrzuje zdrojové složky uložené v session; není nucen je vybírat znovu.
-- Bucket target paths se z JSON automaticky neobnovují.
-- Bucket kódy a ID načtených záznamů se sanitizují.
-- Přesun souboru používá non-conflicting target path, takže nedochází k tichému přepisu existujícího souboru.
-- Po cancelu nebo částečném selhání apply flow nezahazuje slepě celý virtuální stav.
+## Aktivní ochrany
+- Tokeny se neukládají do session JSON ani do `cloud_original_metadata`.
+- Primárně se používá systémový keyring; fallback soubor má omezená práva.
+- Cache žije mimo repozitář a má manifest s providerem, účtem, assetem a revizí.
+- Lokální session roots se sanitizují přes `realpath()` a nesmí být root filesystemu.
+- Cloud-only nebo nedostupný asset se nedává do duplicate pipeline jako lokální soubor.
+- Cloudové originály se vzdáleně nemažou a nepřesouvají.
+- `TRASH` u cloudových položek nespouští vzdálené mazání; uživatel musí zvolit explicitní exportní cíl, pokud chce kopii.
+- Při kolizi cílového jména se používá non-conflicting cesta, takže nedochází k tichému přepsání.
+
+## Kde se co ukládá
+- `Kaja_session.json`: metadata session bez tokenů.
+- systémový keyring nebo lokální fallback: OAuth tokeny.
+- uživatelský app data adresář: cache a veřejná metadata cloudových účtů.
 
 ## Zbytková rizika
-- Session roots jsou pořád metadata dodaná souborem, takže potvrzení uživatelem je poslední hranice důvěry.
-- Pokud není dostupný `send2trash`, mazání padá na `os.remove`, tedy permanentní delete.
-- GUI smoke testy běží headless; vizuální kvalita a ergonomie stále vyžadují ruční kontrolu.
-
-## Doporučení pro další změny
-- nepřidávat `pickle`, `eval`, `exec` ani automatické načítání cílových bucket cest,
-- nové filesystem operace vždy validovat vůči explicitnímu scope,
-- při rozšíření session formátu přidat regresní testy současně s implementací.
+- Fallback token store je pořád lokální soubor; proto je pouze nouzový.
+- Google Photos Picker zpřístupní jen položky, které uživatel v oficiálním pickeru sám vybere; aplikace proto netvrdí plný přístup k celé knihovně.
+- Google Photos export režim zůstává k dispozici jako lokální fallback bez cloudového přihlášení.
+- Apple Photos a iCloud Drive pracují podle toho, co je skutečně dostupné lokálně na disku.

@@ -28,10 +28,11 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
-    argv_emulation=False,
+    argv_emulation=True,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=['resources/kajovo_photoselector.icns'],
 )
 coll = COLLECT(
     exe,
@@ -45,6 +46,6 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name='FotoSelector.app',
-    icon=None,
-    bundle_identifier=None,
+    icon='resources/kajovo_photoselector.icns',
+    bundle_identifier='cz.karelmartinek.fotoselector',
 )

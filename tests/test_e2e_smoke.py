@@ -41,9 +41,9 @@ class E2ESmokeTests(unittest.TestCase):
             session_path = os.path.join(work_root, "session.json")
             write_test_image(image_path)
 
-            with patch("KajovoPhotoSelector.QFileDialog.getExistingDirectory", side_effect=[source_root, target_root]), \
-                patch("KajovoPhotoSelector.QFileDialog.getSaveFileName", return_value=(session_path, "JSON")), \
-                patch("KajovoPhotoSelector.QFileDialog.getOpenFileName", return_value=(session_path, "JSON")), \
+            with patch.object(self.win, "_exec_directory_dialog", side_effect=[source_root, target_root]), \
+                patch.object(self.win, "_exec_save_dialog", return_value=session_path), \
+                patch.object(self.win, "_exec_open_dialog", return_value=session_path), \
                 patch("KajovoPhotoSelector.QProgressDialog", DummyScanDialog), \
                 patch("KajovoPhotoSelector.DagmarProgress", DummyProgress), \
                 patch.object(self.win, "_ask_scan_options", return_value=(0, 0, False)), \
@@ -93,7 +93,7 @@ class E2ESmokeTests(unittest.TestCase):
                 self.assertEqual(self.win.buckets["T1"].path, "")
                 self.assertEqual(self.win.bucket_widgets["T1"]["lbl_path"].text(), "Cesta: (není namapováno)")
 
-                with patch("KajovoPhotoSelector.QFileDialog.getExistingDirectory", return_value=target_root):
+                with patch.object(self.win, "_exec_directory_dialog", return_value=target_root):
                     QTest.mouseClick(self.win.bucket_widgets["T1"]["btn_select"], Qt.MouseButton.LeftButton)
                     QApplication.processEvents()
 
@@ -113,7 +113,7 @@ class E2ESmokeTests(unittest.TestCase):
             write_test_image(img1, color=(10, 20, 30))
             write_test_image(img2, color=(10, 20, 30))
 
-            with patch("KajovoPhotoSelector.QFileDialog.getExistingDirectory", return_value=source_root), \
+            with patch.object(self.win, "_exec_directory_dialog", return_value=source_root), \
                 patch("KajovoPhotoSelector.QProgressDialog", DummyScanDialog), \
                 patch("KajovoPhotoSelector.DagmarProgress", DummyProgress), \
                 patch("KajovoPhotoSelector.DuplicateGroupDialog", AutoDuplicateDialog), \
@@ -126,7 +126,7 @@ class E2ESmokeTests(unittest.TestCase):
                 QApplication.processEvents()
 
             buckets = sorted(rec.bucket for rec in self.win.images)
-            self.assertEqual(buckets, ["MAIN", "TRASH"])
+            self.assertEqual(buckets, ["DUPLICITA", "MAIN"])
 
 
 if __name__ == "__main__":

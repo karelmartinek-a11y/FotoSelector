@@ -18,12 +18,19 @@ class DummyProgress:
     def __init__(self, *args, **kwargs):
         self.updated = []
         self.closed = False
+        self.detail = ""
 
     def wasCanceled(self):
         return False
 
-    def update(self, value):
+    def update(self, value, *args, **kwargs):
         self.updated.append(value)
+
+    def set_detail_text(self, text):
+        self.detail = text
+
+    def complete(self):
+        self.closed = True
 
     def close(self):
         self.closed = True

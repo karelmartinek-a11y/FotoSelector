@@ -12,7 +12,7 @@ import random
 import subprocess
 import tempfile
 import weakref
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from typing import Callable, Dict, List, Optional, Tuple
 from PyQt6.QtCore import (
     Qt,
@@ -68,6 +68,7 @@ from PyQt6.QtWidgets import (
     QProgressBar,
     QLineEdit,
     QCheckBox,
+    QComboBox,
     QSpinBox,
     QDialog,
     QDialogButtonBox,
@@ -102,6 +103,20 @@ from cloud_sync import (
     normalize_scan_sources,
     provider_label,
     source_for_path,
+)
+from cloud_providers import (
+    CloudAsset,
+    CloudAuthState,
+    CloudDownloadState,
+    CloudProviderType,
+    CloudServiceManager,
+    CloudSource,
+)
+from cloud_providers.errors import (
+    CloudAuthError,
+    CloudConfigurationError,
+    CloudProviderError,
+    CloudUnavailableError,
 )
 from kps_security import (
     normalize_session_roots,
@@ -859,6 +874,10 @@ def safe_move_file(src: str, dst: str) -> None:
         except Exception as e:
             logger.error("Fallback copy+delete selhal pro %s -> %s: %s", src, dst, e)
             raise
+def safe_copy_file(src: str, dst: str) -> None:
+    """Bezpečná kopie bez přepsání existujícího cíle."""
+    dst = resolve_non_conflicting_path(dst)
+    shutil.copy2(src, dst)
 def is_system_like_path(path: str) -> bool:
     low = os.path.abspath(path).lower()
     return any(k in low for k in SYSTEM_PATH_KEYWORDS)
@@ -998,6 +1017,42 @@ class ImageRecord:
     source_label: str = "Lokalni slozka"
     source_root: str = ""
     read_only: bool = False
+    is_cloud: bool = False
+    cloud_provider: str = ""
+    cloud_account_id: str = ""
+    cloud_asset_id: str = ""
+    cloud_stable_id: str = ""
+    cloud_revision_id: str = ""
+    cloud_source_uri: str = ""
+    local_cache_path: str = ""
+    download_state: str = CloudDownloadState.LOCAL.value
+    cloud_original_metadata: Dict[str, object] = field(default_factory=dict)
+
+
+def image_record_from_cloud_asset(asset: CloudAsset, record_id: int) -> ImageRecord:
+    local_path = asset.local_cache_path or asset.source_uri or ""
+    return ImageRecord(
+        id=record_id,
+        path=local_path,
+        size=asset.size,
+        bucket="MAIN",
+        width=asset.width,
+        height=asset.height,
+        source_provider=asset.provider,
+        source_label=provider_label(asset.provider),
+        source_root=asset.source_uri,
+        read_only=True,
+        is_cloud=True,
+        cloud_provider=asset.provider,
+        cloud_account_id=asset.account_id,
+        cloud_asset_id=asset.asset_id,
+        cloud_stable_id=asset.stable_id,
+        cloud_revision_id=asset.revision_id,
+        cloud_source_uri=asset.source_uri,
+        local_cache_path=asset.local_cache_path,
+        download_state=asset.download_state,
+        cloud_original_metadata=dict(asset.original_provider_metadata or {}),
+    )
 
 
 @dataclass
@@ -1522,6 +1577,330 @@ class CloudSourcesDialog(QDialog):
 
     def selected_sources(self) -> List[CloudLocalSource]:
         return [source for source, chk in self._checkboxes if chk.isChecked()]
+
+
+class CloudAccountsDialog(QDialog):
+    def __init__(self, parent: QWidget, cloud_manager: CloudServiceManager):
+        super().__init__(parent)
+        self.cloud_manager = cloud_manager
+        self._selected_sources: List[CloudSource] = []
+        self._sources_by_key: Dict[str, CloudSource] = {}
+        self._provider_cards: Dict[str, QPushButton] = {}
+        self.setWindowTitle("Kájo, prohledej cloudy")
+        self.setModal(True)
+        apply_dialog_theme(self, extra_h=320)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(16)
+        layout.addWidget(
+            make_dialog_header(
+                "Kájo, prohledej cloudy",
+                "Vyberte konektor, bezpečně jej připojte a potom označte zdroje ke skenu. "
+                "Hesla se do aplikace ručně nepíšou; kde to dává smysl, otevře se oficiální přihlášení v prohlížeči.",
+            )
+        )
+
+        connector_card = make_dialog_card()
+        connector_layout = QVBoxLayout(connector_card)
+        connector_layout.setContentsMargins(18, 18, 18, 18)
+        connector_layout.setSpacing(12)
+
+        self.provider_cards_layout = QGridLayout()
+        self.provider_cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.provider_cards_layout.setHorizontalSpacing(10)
+        self.provider_cards_layout.setVerticalSpacing(10)
+        connector_layout.addLayout(self.provider_cards_layout)
+
+        toolbar = QHBoxLayout()
+        self.cmb_provider = QComboBox()
+        for provider in self.cloud_manager.available_providers():
+            self.cmb_provider.addItem(provider.display_name(), provider.provider_type)
+        toolbar.addWidget(QLabel("Konektor:"))
+        toolbar.addWidget(self.cmb_provider, stretch=1)
+
+        self.btn_add_account = QPushButton("Pripojit konektor")
+        self.btn_refresh_sources = QPushButton("Obnovit zdroje")
+        self.btn_disconnect = QPushButton("Odpojit vybrany ucet")
+        self.btn_scan = QPushButton("Kájo, nacti tyto zdroje")
+        style_dialog_button(self.btn_add_account, "accent")
+        style_dialog_button(self.btn_refresh_sources, "surface")
+        style_dialog_button(self.btn_disconnect, "danger")
+        style_dialog_button(self.btn_scan, "accent")
+        toolbar.addWidget(self.btn_add_account)
+        toolbar.addWidget(self.btn_refresh_sources)
+        toolbar.addWidget(self.btn_disconnect)
+        toolbar.addWidget(self.btn_scan)
+        connector_layout.addLayout(toolbar)
+
+        self.lbl_provider_hint = QLabel("")
+        self.lbl_provider_hint.setWordWrap(True)
+        self.lbl_provider_hint.setStyleSheet(DIALOG_STATUS_QSS)
+        connector_layout.addWidget(self.lbl_provider_hint)
+        layout.addWidget(connector_card)
+
+        body = QHBoxLayout()
+        body.setSpacing(14)
+
+        left_card = make_dialog_card()
+        left_layout = QVBoxLayout(left_card)
+        left_layout.setContentsMargins(18, 18, 18, 18)
+        left_layout.setSpacing(10)
+        left_layout.addWidget(QLabel("Pripojene ucty a rezimy"))
+        self.list_accounts = QListWidget()
+        self.list_accounts.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        left_layout.addWidget(self.list_accounts)
+        body.addWidget(left_card, stretch=1)
+
+        right_card = make_dialog_card()
+        right_layout = QVBoxLayout(right_card)
+        right_layout.setContentsMargins(18, 18, 18, 18)
+        right_layout.setSpacing(10)
+        right_layout.addWidget(QLabel("Dostupne zdroje ke skenu"))
+        self.list_sources = QListWidget()
+        self.list_sources.setSelectionMode(QAbstractItemView.SelectionMode.MultiSelection)
+        right_layout.addWidget(self.list_sources)
+        self.lbl_info = QLabel("")
+        self.lbl_info.setWordWrap(True)
+        self.lbl_info.setStyleSheet(DIALOG_STATUS_QSS)
+        right_layout.addWidget(self.lbl_info)
+        body.addWidget(right_card, stretch=2)
+
+        layout.addLayout(body)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
+        btns.rejected.connect(self.reject)
+        style_dialog_button_box(btns, reject_text="Zavrit", reject_kind="surface")
+        layout.addWidget(btns)
+
+        self.btn_add_account.clicked.connect(self._on_add_account)
+        self.btn_refresh_sources.clicked.connect(self._refresh_sources)
+        self.btn_disconnect.clicked.connect(self._on_disconnect)
+        self.btn_scan.clicked.connect(self._on_scan)
+        self.list_accounts.itemSelectionChanged.connect(self._refresh_sources)
+        self.cmb_provider.currentIndexChanged.connect(self._update_provider_hint)
+
+        self._build_provider_cards()
+        self._update_provider_hint()
+        self._refresh_accounts()
+
+    def _provider_card_payload(self, provider_type: str) -> Tuple[str, str, str]:
+        mapping = {
+            CloudProviderType.GOOGLE_DRIVE.value: (
+                "Google Drive",
+                "OAuth v prohlizeci",
+                "Muj Disk a sdilene disky v read-only rezimu",
+            ),
+            CloudProviderType.GOOGLE_PHOTOS.value: (
+                "Google Photos",
+                "Picker nebo export",
+                "Vybrane polozky z oficialniho pickeru nebo Google Takeout",
+            ),
+            CloudProviderType.ONEDRIVE.value: (
+                "OneDrive",
+                "OAuth konektor",
+                "Microsoft Graph v read-only rezimu",
+            ),
+            CloudProviderType.ICLOUD_LOCAL.value: (
+                "iCloud Drive",
+                "Lokalni sync",
+                "Synchronizovana slozka bez zadavani Apple ID do aplikace",
+            ),
+            CloudProviderType.APPLE_PHOTOS.value: (
+                "Apple Photos",
+                "Lokalni knihovna",
+                "Jen pro cteni nad nativne dostupnou knihovnou",
+            ),
+            CloudProviderType.LOCAL_SYNC.value: (
+                "Vsechny sync cloudy",
+                "Zpetna kompatibilita",
+                "Lokalne dostupne slozky Google Drive, OneDrive a iCloud Drive",
+            ),
+        }
+        return mapping.get(provider_type, ("Konektor", "Podporovany rezim", "Vyberte konektor a pokracujte."))
+
+    def _provider_card_stylesheet(self, selected: bool) -> str:
+        border = ACCENT_COLOR if selected else "#25305A"
+        bg = "rgba(255, 213, 79, 0.12)" if selected else "#0E1630"
+        glow = "rgba(255, 213, 79, 0.18)" if selected else "rgba(16, 26, 51, 0.0)"
+        return f"""
+        QPushButton {{
+            background-color: {bg};
+            color: {TEXT_COLOR};
+            border: 2px solid {border};
+            border-radius: {RADIUS}px;
+            padding: 14px;
+            text-align: left;
+            font-weight: 700;
+        }}
+        QPushButton:hover {{
+            background-color: rgba(255, 213, 79, 0.10);
+            border: 2px solid {ACCENT_COLOR};
+        }}
+        QPushButton:pressed {{
+            background-color: rgba(255, 213, 79, 0.18);
+        }}
+        """
+
+    def _build_provider_cards(self):
+        while self.provider_cards_layout.count():
+            item = self.provider_cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._provider_cards.clear()
+
+        providers = self.cloud_manager.available_providers()
+        for index, provider in enumerate(providers):
+            provider_type = provider.provider_type
+            title, badge, body = self._provider_card_payload(provider_type)
+            btn = QPushButton(f"{title}\n[{badge}]\n{body}")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setMinimumHeight(108)
+            btn.setStyleSheet(self._provider_card_stylesheet(False))
+            btn.clicked.connect(lambda _, pt=provider_type: self._select_provider_card(pt))
+            row = index // 3
+            col = index % 3
+            self.provider_cards_layout.addWidget(btn, row, col)
+            self._provider_cards[provider_type] = btn
+        self._sync_provider_cards()
+
+    def _select_provider_card(self, provider_type: str):
+        index = self.cmb_provider.findData(provider_type)
+        if index >= 0:
+            self.cmb_provider.setCurrentIndex(index)
+        self._sync_provider_cards()
+
+    def _sync_provider_cards(self):
+        selected_type = str(self.cmb_provider.currentData() or "")
+        for provider_type, button in self._provider_cards.items():
+            is_selected = provider_type == selected_type
+            button.blockSignals(True)
+            button.setChecked(is_selected)
+            button.setStyleSheet(self._provider_card_stylesheet(is_selected))
+            button.blockSignals(False)
+
+    def _provider_hint_text(self, provider_type: str) -> str:
+        mapping = {
+            CloudProviderType.GOOGLE_DRIVE.value: (
+                "Google Drive API: oficiální OAuth přihlášení v prohlížeči, potom čtení obrázků z Mého disku "
+                "a případně i ze sdílených disků v read-only režimu."
+            ),
+            CloudProviderType.GOOGLE_PHOTOS.value: (
+                "Google Photos: buď oficiální Picker pro uživatelem vybrané položky, nebo lokální export / Google Takeout. "
+                "Nejde o plný scan celé knihovny."
+            ),
+            CloudProviderType.ONEDRIVE.value: (
+                "OneDrive API: oficiální přihlášení Microsoft, potom read-only přístup přes Graph API."
+            ),
+            CloudProviderType.ICLOUD_LOCAL.value: (
+                "iCloud Drive: pravdivý lokální režim nad synchronizovanou složkou. Do aplikace se nezadává Apple ID ani heslo."
+            ),
+            CloudProviderType.APPLE_PHOTOS.value: (
+                "Apple Photos / iCloud Photos: lokální knihovna jen pro čtení. Žádný falešný cloud login, jen nativně dostupná data na disku."
+            ),
+            CloudProviderType.LOCAL_SYNC.value: (
+                "Synchronizované cloudové složky: zpětně kompatibilní režim pro lokálně dostupné složky Google Drive Desktop, OneDrive a iCloud Drive."
+            ),
+        }
+        return mapping.get(provider_type, "Vyberte podporovaný konektor a potom jej bezpečně připojte.")
+
+    def _update_provider_hint(self):
+        provider_type = self.cmb_provider.currentData()
+        self._sync_provider_cards()
+        self.lbl_provider_hint.setText(self._provider_hint_text(str(provider_type or "")))
+
+    def _selected_account(self):
+        item = self.list_accounts.currentItem()
+        if item is None:
+            return None
+        return item.data(Qt.ItemDataRole.UserRole)
+
+    def _refresh_accounts(self):
+        self.list_accounts.clear()
+        for account in self.cloud_manager.list_accounts():
+            state_map = {
+                CloudAuthState.LOCAL_ONLY.value: "lokalni nebo nativni rezim",
+                CloudAuthState.AUTHENTICATED.value: "pripojeno",
+                CloudAuthState.NEEDS_AUTH.value: "ceka na prihlaseni",
+                CloudAuthState.DISCONNECTED.value: "odpojeno",
+                CloudAuthState.ERROR.value: "chyba",
+            }
+            state = state_map.get(account.auth_state, account.auth_state)
+            text = f"{account.display_name}\n{provider_label(account.provider)} | stav: {state}"
+            item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, account)
+            self.list_accounts.addItem(item)
+        if self.list_accounts.count() > 0 and self.list_accounts.currentRow() < 0:
+            self.list_accounts.setCurrentRow(0)
+        else:
+            self._refresh_sources()
+
+    def _on_add_account(self):
+        provider_type = self.cmb_provider.currentData()
+        if not provider_type:
+            return
+        try:
+            account = self.cloud_manager.add_account(provider_type, parent_widget=self)
+        except (CloudProviderError, Exception) as exc:
+            QMessageBox.warning(self, "Cloudovy konektor", str(exc))
+            return
+        self._refresh_accounts()
+        self.lbl_info.setText(account.status_text or account.limitation_text)
+
+    def _on_disconnect(self):
+        account = self._selected_account()
+        if account is None:
+            return
+        self.cloud_manager.disconnect_account(account.account_id)
+        self._refresh_accounts()
+        self.list_sources.clear()
+        self.lbl_info.setText("Ucet byl odpojen.")
+
+    def _refresh_sources(self):
+        self.list_sources.clear()
+        self._sources_by_key.clear()
+        account = self._selected_account()
+        if account is None:
+            self.lbl_info.setText("Nejdriv vyberte nebo pripojte konektor.")
+            return
+        try:
+            sources = self.cloud_manager.list_sources(account.account_id)
+        except (CloudAuthError, CloudConfigurationError, CloudProviderError, Exception) as exc:
+            self.lbl_info.setText(str(exc))
+            return
+        for source in sources:
+            text = source.name
+            if source.is_read_only:
+                text += " [jen pro cteni]"
+            item = QListWidgetItem(f"{text}\n{source.source_uri}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            key = f"{source.provider}:{source.account_id}:{source.source_id}"
+            item.setData(Qt.ItemDataRole.UserRole, key)
+            self._sources_by_key[key] = source
+            self.list_sources.addItem(item)
+        self.lbl_info.setText(account.limitation_text or account.status_text or "Zdroj je pripraveny.")
+
+    def _on_scan(self):
+        selected: List[CloudSource] = []
+        for row in range(self.list_sources.count()):
+            item = self.list_sources.item(row)
+            if item.checkState() != Qt.CheckState.Checked:
+                continue
+            key = item.data(Qt.ItemDataRole.UserRole)
+            source = self._sources_by_key.get(key)
+            if source is not None:
+                selected.append(source)
+        if not selected:
+            self.lbl_info.setText("Vyberte aspon jeden zdroj.")
+            return
+        self._selected_sources = selected
+        self.accept()
+
+    def selected_sources(self) -> List[CloudSource]:
+        return list(self._selected_sources)
 # =====================
 # DIALOG PRO DUPLICITY
 # =====================
@@ -2056,6 +2435,7 @@ class MainWindow(QMainWindow):
         self.image_by_id: Dict[int, ImageRecord] = {}
         self.item_by_id: Dict[int, QListWidgetItem] = {}
         self.thumb_cache: Dict[int, QPixmap] = {}
+        self.cloud_manager = CloudServiceManager()
         self.next_id: int = 1
         self.current_view: str = "MAIN"  # MAIN nebo kód bucketu
         self.session_roots: List[str] = []
@@ -2268,7 +2648,7 @@ class MainWindow(QMainWindow):
 
         # Akční tlačítka (funkce stejné, jen “Kája” naming)
         self.btn_kajo_stopa = AnimatedPushButton("Kájo, ukaž mi fotky", sfx=lambda: self.sfx.play(SFX_JUMP))
-        self.btn_cloud = AnimatedPushButton("Kájo, pridej cloud", sfx=lambda: self.sfx.play(SFX_JUMP))
+        self.btn_cloud = AnimatedPushButton("Kájo, prohledej cloudy", sfx=lambda: self.sfx.play(SFX_JUMP))
         self.btn_dupes = AnimatedPushButton("Kájo, najdi dvojníky", sfx=lambda: self.sfx.play(SFX_COIN))
         self.btn_run = AnimatedPushButton("Kájo, proveď to", sfx=lambda: self.sfx.play(SFX_POP))
         self.btn_save = AnimatedPushButton("Kájo, zapamatuj si to", sfx=lambda: self.sfx.play(SFX_COIN))
@@ -2585,6 +2965,47 @@ class MainWindow(QMainWindow):
         )
         return clicked == "Kájo, potvrzuji tyto složky"
 
+    def confirm_session_sources(self, roots: List[str], cloud_descriptions: List[str], image_count: int) -> bool:
+        if cloud_descriptions:
+            local_text = "\n".join(f"• {root}" for root in roots) if roots else "• (zadne lokalni roots)"
+            cloud_text = "\n".join(f"• {text}" for text in cloud_descriptions)
+            clicked = self._kajo_box(
+                "Kájo, potvrď lokální i cloudové zdroje",
+                "Session chce obnovit fotky z těchto lokálních roots a cloudových zdrojů:\n\n"
+                f"Lokální roots:\n{local_text}\n\n"
+                f"Cloudové zdroje:\n{cloud_text}\n\n"
+                f"Počet nalezených záznamů v session: {image_count}\n\n"
+                "Potvrďte pouze zdroje, které skutečně poznáváte.",
+                kind="warn",
+                buttons=[
+                    ("Kájo, potvrzuji tyto zdroje", QMessageBox.ButtonRole.AcceptRole),
+                    ("Kájo, zrušit načtení", QMessageBox.ButtonRole.RejectRole),
+                ],
+                default_index=1,
+                style_buttons={
+                    "Kájo, potvrzuji tyto zdroje": BUTTON_GOLD_QSS,
+                    "Kájo, zrušit načtení": BUTTON_PRIMARY_QSS,
+                },
+            )
+            return clicked == "Kájo, potvrzuji tyto zdroje"
+        return self.confirm_session_roots(roots, image_count)
+
+    def _local_path_for_record(self, rec: ImageRecord) -> str:
+        if rec.is_cloud:
+            if rec.local_cache_path and os.path.exists(rec.local_cache_path):
+                return rec.local_cache_path
+            if rec.path and os.path.isabs(rec.path) and os.path.exists(rec.path):
+                return rec.path
+            return ""
+        if rec.path and os.path.exists(rec.path):
+            return rec.path
+        return ""
+
+    def _can_use_record_for_duplicates(self, rec: ImageRecord) -> bool:
+        if rec.is_cloud and rec.download_state not in {CloudDownloadState.LOCAL.value, CloudDownloadState.CACHED.value}:
+            return False
+        return bool(self._local_path_for_record(rec))
+
     # ---------------- VIEW / HEADER ----------------
     def update_view_header(self):
         if self.current_view == "MAIN":
@@ -2623,8 +3044,9 @@ class MainWindow(QMainWindow):
         for rec in records:
             self._add_record_to_list(rec)
     def _display_label_for_record(self, rec: ImageRecord) -> str:
-        base = os.path.basename(rec.path)
-        d = os.path.dirname(rec.path)
+        display_path = self._local_path_for_record(rec) or rec.path or rec.cloud_source_uri
+        base = os.path.basename(display_path)
+        d = os.path.dirname(display_path)
         if len(base) > 20:
             base_disp = "…" + base[-19:]
         else:
@@ -2640,12 +3062,23 @@ class MainWindow(QMainWindow):
         item = QListWidgetItem(text)
         item.setData(Qt.ItemDataRole.UserRole, rec.id)
         tooltip = [
-            rec.path,
+            self._local_path_for_record(rec) or rec.path or rec.cloud_source_uri,
             f"Zdroj: {rec.source_label}",
             f"Velikost: {human_size(rec.size)}",
         ]
         if rec.read_only:
             tooltip.append("Rezim: jen pro cteni")
+        if rec.is_cloud:
+            tooltip.extend(
+                [
+                    f"Cloud provider: {rec.cloud_provider}",
+                    f"Cloud ucet: {rec.cloud_account_id}",
+                    f"Cloud asset: {rec.cloud_asset_id}",
+                    f"Revize: {rec.cloud_revision_id or 'bez revize'}",
+                    f"Stav stazeni: {rec.download_state}",
+                    "Cloudovy original zustava beze zmeny, aplikace pracuje s lokalni cache nebo kopii.",
+                ]
+            )
         item.setToolTip("\n".join(tooltip))
         pm = self.thumb_cache.get(rec.id)
         if pm is None:
@@ -2660,15 +3093,16 @@ class MainWindow(QMainWindow):
         self.item_by_id[rec.id] = item
     # ---------------- NÁHLEDY ----------------
     def _start_thumb_worker(self, rec: ImageRecord):
-        if not os.path.exists(rec.path):
+        local_path = self._local_path_for_record(rec)
+        if not local_path:
             return
-        worker = ThumbWorker(rec.id, rec.path)
+        worker = ThumbWorker(rec.id, local_path)
         worker.signals.finished.connect(self.on_thumb_ready)
         self.threadpool.start(worker)
     @pyqtSlot(int, str, QImage)
     def on_thumb_ready(self, rec_id: int, source_path: str, image: QImage):
         rec = self.image_by_id.get(rec_id)
-        if rec is None or rec.path != source_path:
+        if rec is None or self._local_path_for_record(rec) != source_path:
             return
         pm = QPixmap.fromImage(image)
         self.thumb_cache[rec_id] = pm
@@ -2860,33 +3294,7 @@ class MainWindow(QMainWindow):
         self._register_scan_source(self._make_local_source(dir_))
         self._scan_directories([dir_], append=True, min_kb=mkb, max_kb=xkb, ignore_system=ign)
     def on_add_cloud_source(self):
-        choices = ["iCloud", "Google Drive", "OneDrive", "Vsechny cloudy"]
-        provider_label_choice, ok = QInputDialog.getItem(
-            self,
-            "Cloudove zdroje",
-            "Ktery cloud chcete pridat?",
-            choices,
-            0,
-            False,
-        )
-        if not ok or not provider_label_choice:
-            return
-        provider_map = {
-            "iCloud": "icloud",
-            "Google Drive": "google-drive",
-            "OneDrive": "onedrive",
-            "Vsechny cloudy": None,
-        }
-        provider_code = provider_map.get(provider_label_choice)
-        detected = detect_cloud_sources(provider=provider_code)
-        if not detected:
-            self._kajo_box(
-                "Kájo, cloud neni po ruce",
-                "Nenalezl jsem zadne pripojene nebo synchronizovane cloudove slozky pro zvolenou volbu.",
-                kind="warn",
-            )
-            return
-        dlg = CloudSourcesDialog(self, f"Pridat {provider_label_choice}", detected)
+        dlg = CloudAccountsDialog(self, self.cloud_manager)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         selected = dlg.selected_sources()
@@ -2896,12 +3304,74 @@ class MainWindow(QMainWindow):
         if not opts:
             return
         mkb, xkb, ign = opts
-        roots: List[str] = []
-        for source in selected:
-            self._register_scan_source(source)
-            roots.append(source.root)
-        self.toast("Kájo pripojuje cloudove slozky…", "warn", 2000)
-        self._scan_directories(roots, append=True, min_kb=mkb, max_kb=xkb, ignore_system=ign)
+        self.toast("Kájo pripojuje cloudove zdroje…", "warn", 2000)
+        self._scan_cloud_sources(selected, min_kb=mkb, max_kb=xkb, ignore_system=ign)
+
+    def _scan_cloud_sources(self, sources: List[CloudSource], min_kb: int, max_kb: int, ignore_system: bool):
+        progress = DagmarProgress("Načítám cloudové zdroje…", self, 0)
+        progress.set_detail_text("Pripravuji cloudove scany a lokalni cache.")
+        min_bytes = min_kb * 1024 if min_kb > 0 else 0
+        max_bytes = max_kb * 1024 if max_kb > 0 else 0
+        existing_keys = {
+            (rec.cloud_provider, rec.cloud_account_id, rec.cloud_asset_id, rec.cloud_revision_id)
+            for rec in self.images
+            if rec.is_cloud
+        }
+        added = 0
+        skipped_unavailable = 0
+        try:
+            for source_index, source in enumerate(sources, start=1):
+                if progress.wasCanceled():
+                    break
+                progress.set_detail_text(
+                    f"Zdroj {source_index}/{len(sources)}\n{source.name}\n{source.limitation_text or 'Načítám metadata'}"
+                )
+                assets = self.cloud_manager.scan_source(source, mime_filter=["image/"])
+                for asset_index, asset in enumerate(assets, start=1):
+                    if progress.wasCanceled():
+                        break
+                    if min_bytes and asset.size < min_bytes:
+                        continue
+                    if max_bytes and asset.size > max_bytes:
+                        continue
+                    asset_key = (asset.provider, asset.account_id, asset.asset_id, asset.revision_id)
+                    if asset_key in existing_keys:
+                        continue
+                    if asset.download_state != CloudDownloadState.NOT_DOWNLOADED.value:
+                        try:
+                            self.cloud_manager.ensure_local_asset(asset)
+                        except (CloudUnavailableError, CloudProviderError):
+                            asset.download_state = CloudDownloadState.UNAVAILABLE.value
+                    else:
+                        try:
+                            self.cloud_manager.ensure_local_asset(asset)
+                        except (CloudUnavailableError, CloudProviderError):
+                            skipped_unavailable += 1
+                    rec = image_record_from_cloud_asset(asset, self.next_id)
+                    self.next_id += 1
+                    self.images.append(rec)
+                    self.image_by_id[rec.id] = rec
+                    existing_keys.add(asset_key)
+                    added += 1
+                    if self.current_view == "MAIN":
+                        self._add_record_to_list(rec)
+                    progress.update(
+                        added,
+                        detail_text=(
+                            f"Zdroj: {source.name}\n"
+                            f"Polozka: {asset.name}\n"
+                            f"Pridano cloudovych zaznamu: {added}\n"
+                            f"Nedostupne placeholdery nebo nepritomne kopie: {skipped_unavailable}"
+                        ),
+                    )
+        finally:
+            progress.complete()
+        if added:
+            self.mark_dirty()
+            self.update_view_header()
+            self.toast(f"Kájo pridal {added} cloudovych polozek.", "ok", 2600)
+        elif skipped_unavailable:
+            self.toast("Kájo nasel jen cloud-only polozky bez lokalni kopie.", "warn", 2600)
     def _scan_directories(
         self,
         roots: List[str],
@@ -3047,10 +3517,29 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return False
+        cloud_sources_payload = []
+        seen_cloud_sources = set()
+        for rec in self.images:
+            if not rec.is_cloud:
+                continue
+            key = (rec.cloud_provider, rec.cloud_account_id, rec.cloud_source_uri)
+            if key in seen_cloud_sources:
+                continue
+            seen_cloud_sources.add(key)
+            cloud_sources_payload.append(
+                {
+                    "provider": rec.cloud_provider,
+                    "account_id": rec.cloud_account_id,
+                    "source_uri": rec.cloud_source_uri,
+                    "label": rec.source_label,
+                }
+            )
         data = {
-            "version": 1,
+            "version": 2,
             "roots": self.session_roots,
             "scan_sources": [source.to_dict() for source in self.scan_sources],
+            "cloud_accounts": [account.to_dict() for account in self.cloud_manager.list_accounts()],
+            "cloud_sources": cloud_sources_payload,
             "current_view": self.current_view,
             "last_min_kb": self.last_min_kb,
             "last_max_kb": self.last_max_kb,
@@ -3102,10 +3591,16 @@ class MainWindow(QMainWindow):
             return
         logger.info("Načítám session z %s", path)
         session_roots = sanitize_session_roots(data.get("roots", []))
-        if not self.confirm_session_roots(session_roots, len(data.get("images", []))):
+        cloud_descriptions = [
+            f"{provider_label(str(item.get('provider', '')))} | {item.get('account_id', '')} | {item.get('source_uri', '')}"
+            for item in data.get("cloud_sources", [])
+            if isinstance(item, dict)
+        ]
+        if not self.confirm_session_sources(session_roots, cloud_descriptions, len(data.get("images", []))):
             logger.info("Načtení session zrušeno: zdrojové složky nebyly potvrzeny.")
             return
         self.reset_state()
+        self.cloud_manager.load_accounts()
         loaded_sources = normalize_scan_sources(data.get("scan_sources", []))
         if loaded_sources:
             allowed_roots = {os.path.normcase(root) for root in session_roots}
@@ -3139,7 +3634,22 @@ class MainWindow(QMainWindow):
                     w["lbl_path"].setText("Cesta: (není namapováno)")
                 w["group_box"].setTitle(cfg.alias.upper())
                 w["btn_assign"].setText(f"Kájo, hoď to do: {cfg.alias}")
-        images_data = sanitize_loaded_images(data.get("images", []), self.session_roots)
+        raw_images = data.get("images", [])
+        local_images = [item for item in raw_images if isinstance(item, dict) and not bool(item.get("is_cloud", False))]
+        cloud_images = [item for item in raw_images if isinstance(item, dict) and bool(item.get("is_cloud", False))]
+        local_paths = {
+            item["path"]
+            for item in sanitize_loaded_images(local_images, self.session_roots)
+            if isinstance(item, dict) and isinstance(item.get("path"), str)
+        }
+        images_data = []
+        for item in raw_images:
+            if not isinstance(item, dict):
+                continue
+            if bool(item.get("is_cloud", False)):
+                images_data.append(item)
+            elif item.get("path") in local_paths:
+                images_data.append(item)
         used_ids: set[int] = set()
         progress = DagmarProgress("Obnovuji miniatury…", self, len(images_data))
         for i, rec_data in enumerate(images_data, start=1):
@@ -3154,7 +3664,7 @@ class MainWindow(QMainWindow):
                 bucket_code = self._sanitize_loaded_bucket_code(rec_data.get("bucket", "MAIN"))
                 rec = ImageRecord(
                     id=raw_id,
-                    path=rec_data["path"],
+                    path=rec_data.get("path", ""),
                     size=rec_data["size"],
                     bucket=bucket_code,
                     width=rec_data.get("width"),
@@ -3163,7 +3673,22 @@ class MainWindow(QMainWindow):
                     source_label=rec_data.get("source_label", "Lokalni slozka"),
                     source_root=rec_data.get("source_root", ""),
                     read_only=bool(rec_data.get("read_only", False)),
+                    is_cloud=bool(rec_data.get("is_cloud", False)),
+                    cloud_provider=rec_data.get("cloud_provider", ""),
+                    cloud_account_id=rec_data.get("cloud_account_id", ""),
+                    cloud_asset_id=rec_data.get("cloud_asset_id", ""),
+                    cloud_stable_id=rec_data.get("cloud_stable_id", ""),
+                    cloud_revision_id=rec_data.get("cloud_revision_id", ""),
+                    cloud_source_uri=rec_data.get("cloud_source_uri", ""),
+                    local_cache_path=rec_data.get("local_cache_path", ""),
+                    download_state=rec_data.get("download_state", CloudDownloadState.LOCAL.value),
+                    cloud_original_metadata=rec_data.get("cloud_original_metadata", {}) or {},
                 )
+                if rec.is_cloud:
+                    if rec.cloud_account_id not in self.cloud_manager.accounts:
+                        rec.download_state = CloudDownloadState.UNAVAILABLE.value
+                    elif rec.local_cache_path and not os.path.exists(rec.local_cache_path):
+                        rec.download_state = CloudDownloadState.UNAVAILABLE.value
             except Exception:
                 rec = None
             if rec is not None:
@@ -3336,7 +3861,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(outro_ms + 200, lambda: QApplication.instance().quit())
     # ---------------- DUPLICITY ----------------
     def on_find_duplicates(self):
-        main_records = [rec for rec in self.images if rec.bucket == "MAIN"]
+        main_records = [rec for rec in self.images if rec.bucket == "MAIN" and self._can_use_record_for_duplicates(rec)]
         if len(main_records) < 2:
             self.sfx.play(SFX_ERROR)
             self.toast("Kájo potřebuje aspoň 2 fotky v hlavním světě.", "err", 2600)
@@ -3349,13 +3874,14 @@ class MainWindow(QMainWindow):
                 logger.info("Hledání duplicit přerušeno uživatelem.")
                 progress.complete()
                 return
-            signature = sampled_file_signature(rec.path, rec.size)
+            local_path = self._local_path_for_record(rec)
+            signature = sampled_file_signature(local_path, rec.size) if local_path else None
             if signature is not None:
                 exact_map.setdefault(signature, []).append(rec)
             if progress is not None:
                 progress.update(
                     i,
-                    detail_text=f"Zkontrolováno souborů: {i}\nAktuální soubor: {os.path.basename(rec.path)}",
+                    detail_text=f"Zkontrolováno souborů: {i}\nAktuální soubor: {os.path.basename(local_path or rec.path)}",
                 )
         if progress is not None:
             progress.complete()
@@ -3372,13 +3898,14 @@ class MainWindow(QMainWindow):
                     logger.info("Vizuální porovnání duplicit přerušeno uživatelem.")
                     progress.complete()
                     return
-                h = perceptual_hash(rec.path)
+                local_path = self._local_path_for_record(rec)
+                h = perceptual_hash(local_path) if local_path else None
                 if h is not None:
                     phashes.append((rec, h))
                 if progress is not None:
                     progress.update(
                         i,
-                        detail_text=f"Zkontrolováno fotek: {i}\nAktuální soubor: {os.path.basename(rec.path)}",
+                        detail_text=f"Zkontrolováno fotek: {i}\nAktuální soubor: {os.path.basename(local_path or rec.path)}",
                     )
             if progress is not None:
                 progress.complete()
@@ -3490,14 +4017,34 @@ class MainWindow(QMainWindow):
         operations: List[Tuple[ImageRecord, str, str]] = []  # (rec, op_type, target_path_or_empty)
         missing_sources = 0
         read_only_skipped = 0
+        cloud_trash_skipped = 0
         for rec in self.images:
             if rec.bucket == "MAIN":
+                continue
+            local_path = self._local_path_for_record(rec)
+            if rec.is_cloud:
+                if not local_path:
+                    missing_sources += 1
+                    logger.warning("Cloudova cache nebo lokalni kopie chybi, preskakuji: %s", rec.cloud_asset_id)
+                    continue
+                if rec.bucket == "TRASH":
+                    cloud_trash_skipped += 1
+                    logger.warning("Cloudovy original se nema mazat, preskakuji TRASH: %s", rec.cloud_asset_id)
+                    continue
+                b = self.buckets.get(rec.bucket)
+                if not b or not b.path:
+                    logger.warning("Bucket %s nema cestu pro export cloudove kopie, preskakuji: %s", rec.bucket, rec.cloud_asset_id)
+                    continue
+                target_dir = b.path
+                os.makedirs(target_dir, exist_ok=True)
+                dst = os.path.join(target_dir, os.path.basename(local_path))
+                operations.append((rec, "COPY", dst))
                 continue
             if rec.read_only:
                 read_only_skipped += 1
                 logger.warning("Zdroj je jen pro cteni, preskakuji: %s", rec.path)
                 continue
-            if not os.path.exists(rec.path):
+            if not local_path:
                 missing_sources += 1
                 logger.warning("Zdroj chybí, přeskočeno: %s", rec.path)
                 continue
@@ -3512,7 +4059,7 @@ class MainWindow(QMainWindow):
                 os.makedirs(target_dir, exist_ok=True)
                 dst = os.path.join(target_dir, os.path.basename(rec.path))
                 operations.append((rec, "MOVE", dst))
-        if not operations and missing_sources == 0 and read_only_skipped == 0:
+        if not operations and missing_sources == 0 and read_only_skipped == 0 and cloud_trash_skipped == 0:
             self._kajo_box("Kájo, není co provést", "Není žádná operace k provedení.", kind="info")
             return
         if not operations and read_only_skipped > 0 and missing_sources == 0:
@@ -3522,9 +4069,17 @@ class MainWindow(QMainWindow):
                 kind="warn",
             )
             return
+        if not operations and cloud_trash_skipped > 0 and missing_sources == 0:
+            self._kajo_box(
+                "Kájo, cloudovy original zustava",
+                "Cloudove polozky v Kájově koši se vzdáleně nemažou. Vyberte jim cílovou hromádku s explicitní cestou, pokud chcete export kopie.",
+                kind="warn",
+            )
+            return
         progress = DagmarProgress("Provádím fyzické přesuny…", self, len(operations))
-        progress.set_detail_text("Postupně přesouvám soubory do cílových složek nebo do koše.")
+        progress.set_detail_text("Postupně přesouvám lokální soubory, exportuji cloudové kopie nebo mažu lokální záznamy.")
         moved = 0
+        copied = 0
         trashed = 0
         failed = 0
         canceled = False
@@ -3545,6 +4100,13 @@ class MainWindow(QMainWindow):
                     trashed += 1
                     completed_ids.add(rec.id)
                     self._coin_per_file(1)
+                elif op_type == "COPY":
+                    source_path = self._local_path_for_record(rec)
+                    safe_copy_file(source_path, target)
+                    logger.info("EXPORT KOPIE: %s -> %s", source_path, target)
+                    copied += 1
+                    completed_ids.add(rec.id)
+                    self._coin_per_file(1)
                 elif op_type == "MOVE":
                     safe_move_file(rec.path, target)
                     logger.info("PŘESUNUTO: %s -> %s", rec.path, target)
@@ -3560,7 +4122,13 @@ class MainWindow(QMainWindow):
             if progress is not None:
                 progress.update(
                     i,
-                    detail_text=f"Přesunuto: {moved}\nDo koše: {trashed}\nChyby: {failed}\nAktuální soubor: {os.path.basename(rec.path)}",
+                    detail_text=(
+                        f"Přesunuto: {moved}\n"
+                        f"Exportovano z cloudu: {copied}\n"
+                        f"Do koše: {trashed}\n"
+                        f"Chyby: {failed}\n"
+                        f"Aktuální soubor: {os.path.basename(self._local_path_for_record(rec) or rec.path)}"
+                    ),
                 )
         if progress is not None:
             progress.complete()
@@ -3570,6 +4138,7 @@ class MainWindow(QMainWindow):
             msg_txt = (
                 f"Operace byla přerušena.\n"
                 f"Přesunuto před stornem: {moved} souborů\n"
+                f"Exportovano z cloudu před stornem: {copied} souborů\n"
                 f"Do koše před stornem: {trashed} souborů\n"
                 f"Chyby do přerušení: {failed}\n"
                 "Aplikace zůstává běžet a zachovává dokončenou část operace."
@@ -3584,10 +4153,12 @@ class MainWindow(QMainWindow):
         # po provedení – vyprázdnit vše, jako při startu
         msg_txt = (
             f"Přesunuto: {moved} souborů\n"
+            f"Exportovano z cloudu: {copied} souborů\n"
             f"Do koše: {trashed} souborů\n"
             f"Chybné operace: {failed}\n"
             f"Chybějící zdroje: {missing_sources}\n"
-            f"Jen pro čtení (přeskočeno): {read_only_skipped}"
+            f"Jen pro čtení (přeskočeno): {read_only_skipped}\n"
+            f"Cloud TRASH bez vzdáleného mazání (přeskočeno): {cloud_trash_skipped}"
         )
         self._kajo_box("Kájo, hotovo", msg_txt, kind="info")
         logger.info("Kájo, hotovo: %s", msg_txt.replace("\n", " | "))

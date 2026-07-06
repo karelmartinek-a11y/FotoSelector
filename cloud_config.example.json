@@ -1,0 +1,15 @@
+{
+  "google_drive": {
+    "client_id_env": "KPS_GOOGLE_CLIENT_ID",
+    "client_secret_env": "KPS_GOOGLE_CLIENT_SECRET"
+  },
+  "google_photos_picker": {
+    "client_id_env": "KPS_GOOGLE_CLIENT_ID",
+    "client_secret_env": "KPS_GOOGLE_CLIENT_SECRET",
+    "required_scope": "https://www.googleapis.com/auth/photospicker.mediaitems.readonly"
+  },
+  "onedrive": {
+    "client_id_env": "KPS_MICROSOFT_CLIENT_ID",
+    "tenant_id_env": "KPS_MICROSOFT_TENANT_ID"
+  }
+}

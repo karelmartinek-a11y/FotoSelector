@@ -71,7 +71,7 @@ class AppRegressionTests(unittest.TestCase):
                     f,
                 )
 
-            with patch("KajovoPhotoSelector.QFileDialog.getOpenFileName", return_value=(session_path, "JSON")), \
+            with patch.object(self.win, "_exec_open_dialog", return_value=session_path), \
                 patch("KajovoPhotoSelector.DagmarProgress", DummyProgress), \
                 patch.object(self.win, "prompt_unsaved", return_value="discard"), \
                 patch.object(self.win, "confirm_session_roots", return_value=True) as confirm_mock, \
@@ -79,7 +79,7 @@ class AppRegressionTests(unittest.TestCase):
                 patch.object(self.win, "toast"):
                 self.win.on_load()
 
-            confirm_mock.assert_called_once_with([root], 1)
+            confirm_mock.assert_called_once_with([os.path.realpath(root)], 1)
             self.assertEqual(len(self.win.images), 1)
             self.assertEqual(self.win.images[0].bucket, "MAIN")
             self.assertEqual(self.win.buckets["T1"].alias, "Muj cil")
@@ -105,7 +105,7 @@ class AppRegressionTests(unittest.TestCase):
             self.win.images = [ImageRecord(id=99, path=image_path, size=2, bucket="MAIN")]
             self.win.image_by_id = {99: self.win.images[0]}
 
-            with patch("KajovoPhotoSelector.QFileDialog.getOpenFileName", return_value=(session_path, "JSON")), \
+            with patch.object(self.win, "_exec_open_dialog", return_value=session_path), \
                 patch.object(self.win, "prompt_unsaved", return_value="discard"), \
                 patch.object(self.win, "confirm_session_roots", return_value=False):
                 self.win.on_load()
